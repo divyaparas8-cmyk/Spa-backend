@@ -1,0 +1,385 @@
+import { ClientSource, MediaType } from '@prisma/client';
+import prisma from '../../config/database';
+import { AppError } from '../../middleware/errorHandler';
+import { HTTP_STATUS } from '../../config/constants';
+import {
+  CreateClientInput,
+  UpdateClientInput,
+  AddClientMediaInput,
+  ClientQueryFilter,
+  AuthContextUser,
+} from './clients.types';
+
+export class ClientsService {
+  async createClient(data: CreateClientInput, authUser: AuthContextUser) {
+    const trimmedPhone = data.phone.trim();
+
+    // 1. Check duplicate phone
+    const existing = await prisma.client.findUnique({
+      where: { phone: trimmedPhone },
+    });
+
+    if (existing) {
+      throw new AppError('Client with this phone number already exists', HTTP_STATUS.CONFLICT);
+    }
+
+    // 2. Client Acquisition Tracking Business Rule:
+    // If technician creates client: introducedByEmployeeId must store logged-in employee. Do not trust frontend.
+    // Source: STAFF_REFERRAL should auto assign when employee creates client.
+    let introducedByEmployeeId: string | null = null;
+    let source: ClientSource = ClientSource.DIRECT;
+
+    if (authUser.role === 'TECHNICIAN') {
+      introducedByEmployeeId = authUser.id;
+      source = ClientSource.STAFF_REFERRAL;
+    } else {
+      if (data.introducedByEmployeeId) {
+        introducedByEmployeeId = data.introducedByEmployeeId;
+        source = ClientSource.STAFF_REFERRAL;
+      } else if (data.referredByClientId) {
+        source = ClientSource.CLIENT_REFERRAL;
+      } else if (data.source) {
+        source = data.source;
+      }
+    }
+
+    // Parse dates
+    const birthday = data.birthday ? new Date(data.birthday) : null;
+    const anniversary = data.anniversary ? new Date(data.anniversary) : null;
+
+    // 3. Create client in database
+    const client = await prisma.client.create({
+      data: {
+        name: data.name.trim(),
+        phone: trimmedPhone,
+        whatsapp: data.whatsapp ? data.whatsapp.trim() : null,
+        quartier: data.quartier ? data.quartier.trim() : null,
+        birthday,
+        anniversary,
+        source,
+        introducedByEmployeeId,
+        referredByClientId: data.referredByClientId || null,
+        isActive: true,
+        status: 'ACTIVE',
+      },
+      include: {
+        introducedByEmployee: {
+          select: {
+            id: true,
+            email: true,
+            staffProfile: { select: { name: true } },
+          },
+        },
+      },
+    });
+
+    // 4. Create client history record: CLIENT_CREATED
+    await prisma.clientHistory.create({
+      data: {
+        clientId: client.id,
+        action: 'CLIENT_CREATED',
+        details: `Client registered via ${source} by ${authUser.role}`,
+        performedBy: authUser.id,
+      },
+    });
+
+    return client;
+  }
+
+  async getClients(query: ClientQueryFilter) {
+    const page = Math.max(1, parseInt(String(query.page || 1), 10));
+    const limit = Math.max(1, Math.min(100, parseInt(String(query.limit || 20), 10)));
+    const skip = (page - 1) * limit;
+
+    const where: any = {};
+
+    // Dynamic status filtering: ACTIVE, INACTIVE, ALL
+    const rawStatus = (query.status || '').toString().toUpperCase();
+    if (rawStatus === 'ACTIVE' || query.isActive === true || query.isActive === 'true') {
+      where.isActive = true;
+    } else if (rawStatus === 'INACTIVE' || query.isActive === false || query.isActive === 'false') {
+      where.isActive = false;
+    }
+    // If rawStatus === 'ALL' or query.isActive === 'all' or empty, returns both active and inactive
+
+    if (query.search && query.search.trim() !== '') {
+      const search = query.search.trim();
+      where.OR = [
+        { name: { contains: search } },
+        { phone: { contains: search } },
+        { whatsapp: { contains: search } },
+      ];
+    }
+
+    const [total, clients] = await Promise.all([
+      prisma.client.count({ where }),
+      prisma.client.findMany({
+        where,
+        skip,
+        take: limit,
+        orderBy: { createdAt: 'desc' },
+        include: {
+          introducedByEmployee: {
+            select: {
+              id: true,
+              email: true,
+              staffProfile: { select: { name: true } },
+            },
+          },
+          appointments: {
+            orderBy: { appointmentDate: 'desc' },
+            take: 1,
+            select: {
+              appointmentDate: true,
+              serviceSummary: true,
+              appointmentServices: {
+                take: 1,
+                select: {
+                  service: {
+                    select: { name: true },
+                  },
+                },
+              },
+            },
+          },
+          _count: {
+            select: { appointments: true },
+          },
+        },
+      }),
+    ]);
+
+    return {
+      clients: clients.map((c: any) => {
+        const { _count, appointments, ...rest } = c;
+        const latestAppt = appointments?.[0];
+        const latestServiceName =
+          latestAppt?.serviceSummary ||
+          latestAppt?.appointmentServices?.[0]?.service?.name ||
+          c.firstAppointmentService ||
+          null;
+
+        const latestServiceDate =
+          c.lastServiceDate ||
+          latestAppt?.appointmentDate ||
+          c.lastVisitAt ||
+          null;
+
+        return {
+          ...rest,
+          status: c.status || (c.isActive ? 'ACTIVE' : 'INACTIVE'),
+          lastService: latestServiceName,
+          lastServiceDate: latestServiceDate,
+          appointmentsCount: _count.appointments,
+        };
+      }),
+      pagination: {
+        total,
+        page,
+        limit,
+        totalPages: Math.ceil(total / limit),
+      },
+    };
+  }
+
+
+  async getClientById(id: string) {
+    const client = await prisma.client.findUnique({
+      where: { id },
+      include: {
+        media: {
+          orderBy: { createdAt: 'desc' },
+        },
+        history: {
+          orderBy: { createdAt: 'desc' },
+        },
+        introducedByEmployee: {
+          select: {
+            id: true,
+            email: true,
+            staffProfile: { select: { name: true, phone: true } },
+          },
+        },
+        referredByClient: {
+          select: { id: true, name: true, phone: true },
+        },
+        appointments: {
+          orderBy: { appointmentDate: 'desc' },
+          take: 1,
+          select: {
+            appointmentDate: true,
+            serviceSummary: true,
+            appointmentServices: {
+              take: 1,
+              select: {
+                service: {
+                  select: { name: true },
+                },
+              },
+            },
+          },
+        },
+        _count: {
+          select: { appointments: true },
+        },
+      },
+    });
+
+    if (!client) {
+      throw new AppError('Client not found', HTTP_STATUS.NOT_FOUND);
+    }
+
+    const { _count, appointments, ...rest } = client as any;
+    const latestAppt = appointments?.[0];
+    const latestServiceName =
+      latestAppt?.serviceSummary ||
+      latestAppt?.appointmentServices?.[0]?.service?.name ||
+      client.firstAppointmentService ||
+      null;
+
+    const latestServiceDate =
+      client.lastServiceDate ||
+      latestAppt?.appointmentDate ||
+      client.lastVisitAt ||
+      null;
+
+    return {
+      ...rest,
+      status: client.status || (client.isActive ? 'ACTIVE' : 'INACTIVE'),
+      lastService: latestServiceName,
+      lastServiceDate: latestServiceDate,
+      appointmentsCount: _count.appointments,
+    };
+  }
+
+  async updateClient(id: string, data: UpdateClientInput, authUser: AuthContextUser) {
+    const client = await prisma.client.findUnique({ where: { id } });
+    if (!client) {
+      throw new AppError('Client not found', HTTP_STATUS.NOT_FOUND);
+    }
+
+    if (data.phone && data.phone.trim() !== client.phone) {
+      const phoneExists = await prisma.client.findUnique({
+        where: { phone: data.phone.trim() },
+      });
+      if (phoneExists) {
+        throw new AppError('Phone number already in use by another client', HTTP_STATUS.CONFLICT);
+      }
+    }
+
+    const updateData: any = {};
+    if (data.name !== undefined) updateData.name = data.name.trim();
+    if (data.phone !== undefined) updateData.phone = data.phone.trim();
+    if (data.whatsapp !== undefined) updateData.whatsapp = data.whatsapp ? data.whatsapp.trim() : null;
+    if (data.quartier !== undefined) updateData.quartier = data.quartier ? data.quartier.trim() : null;
+    if (data.birthday !== undefined) updateData.birthday = data.birthday ? new Date(data.birthday) : null;
+    if (data.anniversary !== undefined) updateData.anniversary = data.anniversary ? new Date(data.anniversary) : null;
+
+    if (data.status !== undefined) {
+      const s = data.status.toUpperCase();
+      updateData.status = s;
+      updateData.isActive = s === 'ACTIVE';
+    } else if (data.isActive !== undefined) {
+      updateData.isActive = data.isActive;
+      updateData.status = data.isActive ? 'ACTIVE' : 'INACTIVE';
+    }
+    if (data.lastServiceDate !== undefined) {
+      updateData.lastServiceDate = data.lastServiceDate ? new Date(data.lastServiceDate) : null;
+    }
+
+    const updatedClient = await prisma.client.update({
+      where: { id },
+      data: updateData,
+    });
+
+    await prisma.clientHistory.create({
+      data: {
+        clientId: id,
+        action: 'CLIENT_UPDATED',
+        details: `Client updated by ${authUser.role} (${authUser.id})`,
+        performedBy: authUser.id,
+      },
+    });
+
+    return updatedClient;
+  }
+
+  async setClientStatus(id: string, status: 'ACTIVE' | 'INACTIVE', authUser: AuthContextUser) {
+    const client = await prisma.client.findUnique({ where: { id } });
+    if (!client) {
+      throw new AppError('Client not found', HTTP_STATUS.NOT_FOUND);
+    }
+
+    const isActive = status === 'ACTIVE';
+    const updated = await prisma.client.update({
+      where: { id },
+      data: {
+        isActive,
+        status,
+      },
+    });
+
+    await prisma.clientHistory.create({
+      data: {
+        clientId: id,
+        action: isActive ? 'CLIENT_RESTORED' : 'CLIENT_DEACTIVATED',
+        details: isActive
+          ? `Client status restored to Active by ${authUser.role}`
+          : `Client marked as Inactive by ${authUser.role}`,
+        performedBy: authUser.id,
+      },
+    });
+
+    return updated;
+  }
+
+  async deactivateClient(id: string, authUser: AuthContextUser) {
+    return this.setClientStatus(id, 'INACTIVE', authUser);
+  }
+
+  async activateClient(id: string, authUser: AuthContextUser) {
+    return this.setClientStatus(id, 'ACTIVE', authUser);
+  }
+
+
+  async addClientMedia(clientId: string, data: AddClientMediaInput, authUser: AuthContextUser) {
+    const client = await prisma.client.findUnique({ where: { id: clientId } });
+    if (!client) {
+      throw new AppError('Client not found', HTTP_STATUS.NOT_FOUND);
+    }
+
+    const media = await prisma.clientMedia.create({
+      data: {
+        clientId,
+        mediaType: data.mediaType,
+        fileUrl: data.fileUrl.trim(),
+        note: data.note ? data.note.trim() : null,
+      },
+    });
+
+    await prisma.clientHistory.create({
+      data: {
+        clientId,
+        action: 'MEDIA_ADDED',
+        details: `${data.mediaType} photo added by ${authUser.role}`,
+        performedBy: authUser.id,
+      },
+    });
+
+    return media;
+  }
+
+  async getClientHistory(clientId: string) {
+    const client = await prisma.client.findUnique({ where: { id: clientId } });
+    if (!client) {
+      throw new AppError('Client not found', HTTP_STATUS.NOT_FOUND);
+    }
+
+    return prisma.clientHistory.findMany({
+      where: { clientId },
+      orderBy: { createdAt: 'desc' },
+    });
+  }
+}
+
+export const clientsService = new ClientsService();

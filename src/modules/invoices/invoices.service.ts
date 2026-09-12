@@ -1,0 +1,399 @@
+import { loyaltyService } from '../loyalty/loyalty.service';
+import { commissionsService } from '../commissions/commissions.service';
+import { InvoiceStatus, InvoiceItemType, AppointmentServiceStatus, Prisma } from '@prisma/client';
+import prisma from '../../config/database';
+import { AppError } from '../../middleware/errorHandler';
+import { HTTP_STATUS } from '../../config/constants';
+import {
+  CreateInvoiceInput,
+  AddInvoiceItemInput,
+  UpdateInvoiceInput,
+  InvoiceQueryFilter,
+  AuthContextUser,
+} from './invoices.types';
+
+export class InvoicesService {
+  async createInvoice(data: CreateInvoiceInput, authUser: AuthContextUser) {
+    // 1. Fetch appointment with client and appointmentServices
+    const appointment = await prisma.appointment.findUnique({
+      where: { id: data.appointmentId },
+      include: {
+        client: true,
+        appointmentServices: {
+          include: {
+            service: true,
+            technician: {
+              include: { staffProfile: true },
+            },
+          },
+        },
+      },
+    });
+
+    if (!appointment) {
+      throw new AppError('Appointment not found', HTTP_STATUS.NOT_FOUND);
+    }
+
+    // 2. Prevent duplicate invoice for same appointment
+    const existingInvoice = await prisma.invoice.findUnique({
+      where: { appointmentId: data.appointmentId },
+    });
+
+    if (existingInvoice) {
+      throw new AppError('Invoice already exists for this appointment', HTTP_STATUS.CONFLICT);
+    }
+
+    // 3. Create invoice from COMPLETED appointment services only
+    const completedServices = appointment.appointmentServices.filter(
+      (s) => s.status === AppointmentServiceStatus.COMPLETED
+    );
+
+    if (completedServices.length === 0) {
+      throw new AppError(
+        'Cannot create invoice: no completed appointment services found for this visit',
+        HTTP_STATUS.BAD_REQUEST
+      );
+    }
+
+    // Calculate subtotal from completed services
+    let subtotal = completedServices.reduce((sum, s) => sum + Number(s.price), 0);
+
+    // Generate unique invoice number: INV-YYYYMMDD-XXXX
+    const dateObj = new Date();
+    const dateStr = dateObj.toISOString().slice(0, 10).replace(/-/g, '');
+    const countToday = await prisma.invoice.count();
+    const invoiceNumber = `INV-${dateStr}-${String(countToday + 1).padStart(4, '0')}`;
+
+    const invoiceStatus = data.status || InvoiceStatus.PENDING_PAYMENT;
+
+    // 4. In a transaction: Create Invoice, snapshot InvoiceItems, and handle RetailProduct stock decrement
+    const invoice = await prisma.$transaction(async (tx) => {
+      // Process retail products if requested
+      const retailItemsToCreate: any[] = [];
+      if (data.retailProducts && data.retailProducts.length > 0) {
+        for (const rp of data.retailProducts) {
+          const product = await tx.retailProduct.findUnique({
+            where: { id: rp.retailProductId },
+          });
+
+          if (!product || !product.isActive) {
+            throw new AppError(`Retail product not found or inactive (${rp.retailProductId})`, HTTP_STATUS.NOT_FOUND);
+          }
+
+          if (product.quantity < rp.quantity) {
+            throw new AppError(
+              `Insufficient stock for retail product "${product.name}" (requested: ${rp.quantity}, available: ${product.quantity})`,
+              HTTP_STATUS.BAD_REQUEST
+            );
+          }
+
+          // Decrement RetailProduct stock
+          await tx.retailProduct.update({
+            where: { id: product.id },
+            data: {
+              quantity: {
+                decrement: rp.quantity,
+              },
+            },
+          });
+
+          const itemTotal = Number(product.price) * rp.quantity;
+          subtotal += itemTotal;
+
+          retailItemsToCreate.push({
+            retailProductId: product.id,
+            itemType: InvoiceItemType.RETAIL_PRODUCT,
+            name: product.name,
+            productName: product.name,
+            price: product.price,
+            quantity: rp.quantity,
+          });
+        }
+      }
+
+      const discount = data.discount || 0;
+      const total = Math.max(0, subtotal - discount);
+
+      const created = await tx.invoice.create({
+        data: {
+          appointmentId: appointment.id,
+          clientId: appointment.clientId,
+          invoiceNumber,
+          date: dateObj,
+          status: invoiceStatus,
+          subtotal,
+          discount,
+          total,
+        },
+      });
+
+      // Snapshot service items
+      for (const s of completedServices) {
+        await tx.invoiceItem.create({
+          data: {
+            invoiceId: created.id,
+            appointmentServiceId: s.id,
+            serviceId: s.serviceId,
+            technicianId: s.technicianId,
+            itemType: InvoiceItemType.SERVICE,
+            name: s.service?.name || 'Spa Service',
+            price: s.price,
+            quantity: 1,
+          },
+        });
+      }
+
+      // Snapshot retail product items
+      for (const rItem of retailItemsToCreate) {
+        await tx.invoiceItem.create({
+          data: {
+            invoiceId: created.id,
+            ...rItem,
+          },
+        });
+      }
+
+      // Log ClientHistory
+      const totalItems = completedServices.length + retailItemsToCreate.length;
+      await tx.clientHistory.create({
+        data: {
+          clientId: appointment.clientId,
+          action: 'INVOICE_CREATED',
+          details: `Invoice ${invoiceNumber} created (${totalItems} items). Total: ${total} FCFA`,
+          performedBy: authUser.id,
+        },
+      });
+
+      return created;
+    });
+
+    return this.getInvoiceById(invoice.id);
+  }
+
+  async addInvoiceItem(invoiceId: string, data: AddInvoiceItemInput, authUser: AuthContextUser) {
+    const invoice = await prisma.invoice.findUnique({
+      where: { id: invoiceId },
+      include: { items: true },
+    });
+
+    if (!invoice) {
+      throw new AppError('Invoice not found', HTTP_STATUS.NOT_FOUND);
+    }
+
+    if (invoice.status === InvoiceStatus.PAID) {
+      throw new AppError('Cannot add items to a PAID invoice', HTTP_STATUS.BAD_REQUEST);
+    }
+
+    return prisma.$transaction(async (tx) => {
+      let itemPrice = data.price || 0;
+      let itemName = data.name || '';
+
+      if (data.itemType === InvoiceItemType.RETAIL_PRODUCT && data.retailProductId) {
+        const product = await tx.retailProduct.findUnique({
+          where: { id: data.retailProductId },
+        });
+
+        if (!product || !product.isActive) {
+          throw new AppError('Retail product not found or inactive', HTTP_STATUS.NOT_FOUND);
+        }
+
+        if (product.quantity < data.quantity) {
+          throw new AppError(
+            `Insufficient stock for retail product "${product.name}" (requested: ${data.quantity}, available: ${product.quantity})`,
+            HTTP_STATUS.BAD_REQUEST
+          );
+        }
+
+        // Decrement RetailProduct stock
+        await tx.retailProduct.update({
+          where: { id: product.id },
+          data: {
+            quantity: {
+              decrement: data.quantity,
+            },
+          },
+        });
+
+        itemPrice = Number(product.price);
+        itemName = product.name;
+      }
+
+      const itemTotal = itemPrice * data.quantity;
+      const newSubtotal = Number(invoice.subtotal) + itemTotal;
+      const newTotal = Math.max(0, newSubtotal - Number(invoice.discount));
+
+      const createdItem = await tx.invoiceItem.create({
+        data: {
+          invoiceId: invoice.id,
+          retailProductId: data.retailProductId || null,
+          itemType: data.itemType,
+          name: itemName,
+          productName: data.retailProductId ? itemName : null,
+          price: new Prisma.Decimal(itemPrice),
+          quantity: data.quantity,
+        },
+      });
+
+      await tx.invoice.update({
+        where: { id: invoice.id },
+        data: {
+          subtotal: newSubtotal,
+          total: newTotal,
+        },
+      });
+
+      if (invoice.clientId) {
+        await tx.clientHistory.create({
+          data: {
+            clientId: invoice.clientId,
+            action: 'INVOICE_UPDATED',
+            details: `Item "${itemName}" added to Invoice ${invoice.invoiceNumber}. New total: ${newTotal} FCFA`,
+            performedBy: authUser.id,
+          },
+        });
+      }
+
+      return createdItem;
+    });
+  }
+
+  async getInvoices(query: InvoiceQueryFilter) {
+    const page = Math.max(1, parseInt(String(query.page || 1), 10));
+    const limit = Math.max(1, Math.min(100, parseInt(String(query.limit || 20), 10)));
+    const skip = (page - 1) * limit;
+
+    const where: any = {};
+    if (query.status) where.status = query.status;
+    if (query.clientId) where.clientId = query.clientId;
+    if (query.date) where.date = new Date(query.date);
+
+    const [total, invoices] = await Promise.all([
+      prisma.invoice.count({ where }),
+      prisma.invoice.findMany({
+        where,
+        skip,
+        take: limit,
+        orderBy: { createdAt: 'desc' },
+        include: {
+          client: {
+            select: { id: true, name: true, phone: true, quartier: true },
+          },
+          items: true,
+          payments: true,
+        },
+      }),
+    ]);
+
+    const formatted = invoices.map((inv) => {
+      const paidAmount = inv.payments.reduce((sum, p) => sum + Number(p.amount), 0);
+      const remainingAmount = Math.max(0, Number(inv.total) - paidAmount);
+      return {
+        ...inv,
+        paidAmount,
+        remainingAmount,
+      };
+    });
+
+    return {
+      invoices: formatted,
+      pagination: {
+        total,
+        page,
+        limit,
+        totalPages: Math.ceil(total / limit),
+      },
+    };
+  }
+
+  async getPendingInvoices() {
+    return this.getInvoices({ status: InvoiceStatus.PENDING_PAYMENT, limit: 100 });
+  }
+
+  async getInvoiceById(id: string) {
+    const invoice = await prisma.invoice.findUnique({
+      where: { id },
+      include: {
+        client: {
+          select: { id: true, name: true, phone: true, whatsapp: true, quartier: true },
+        },
+        appointment: {
+          select: { id: true, appointmentDate: true, appointmentTime: true, status: true, serviceSummary: true },
+        },
+        items: {
+          include: {
+            technician: {
+              select: { id: true, email: true, staffProfile: { select: { name: true } } },
+            },
+            retailProduct: {
+              select: { id: true, name: true, category: true, quantity: true },
+            },
+          },
+        },
+        payments: {
+          include: {
+            receivedBy: {
+              select: { id: true, email: true, staffProfile: { select: { name: true } } },
+            },
+          },
+          orderBy: { paidAt: 'asc' },
+        },
+      },
+    });
+
+    if (!invoice) {
+      throw new AppError('Invoice not found', HTTP_STATUS.NOT_FOUND);
+    }
+
+    const paidAmount = invoice.payments.reduce((sum, p) => sum + Number(p.amount), 0);
+    const remainingAmount = Math.max(0, Number(invoice.total) - paidAmount);
+
+    return {
+      ...invoice,
+      paidAmount,
+      remainingAmount,
+    };
+  }
+
+  async updateInvoice(id: string, data: UpdateInvoiceInput, authUser: AuthContextUser) {
+    const invoice = await prisma.invoice.findUnique({ where: { id } });
+    if (!invoice) {
+      throw new AppError('Invoice not found', HTTP_STATUS.NOT_FOUND);
+    }
+
+    if (invoice.status === InvoiceStatus.PAID) {
+      throw new AppError('Cannot update a PAID invoice', HTTP_STATUS.BAD_REQUEST);
+    }
+
+    const updateData: any = {};
+    if (data.status) updateData.status = data.status;
+    if (data.discount !== undefined) {
+      updateData.discount = data.discount;
+      updateData.total = Math.max(0, Number(invoice.subtotal) - data.discount);
+    }
+
+    const updated = await prisma.invoice.update({
+      where: { id },
+      data: updateData,
+    });
+
+    if (data.status === InvoiceStatus.PAID) {
+      await commissionsService.generateCommissionsForInvoice(updated.id);
+      await loyaltyService.awardPointsForInvoice(updated.id);
+    }
+
+    if (invoice.clientId) {
+      await prisma.clientHistory.create({
+        data: {
+          clientId: invoice.clientId,
+          action: 'INVOICE_UPDATED',
+          details: `Invoice ${invoice.invoiceNumber} updated by ${authUser.role}`,
+          performedBy: authUser.id,
+        },
+      });
+    }
+
+    return this.getInvoiceById(updated.id);
+  }
+}
+
+export const invoicesService = new InvoicesService();
