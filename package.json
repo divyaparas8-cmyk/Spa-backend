@@ -5,8 +5,8 @@
   "main": "dist/server.js",
   "scripts": {
     "dev": "nodemon --exec ts-node src/server.ts",
-    "build": "tsc",
-    "start": "node dist/server.js",
+    "build": "prisma generate && tsc",
+    "start": "prisma db push --accept-data-loss && node dist/server.js",
     "prisma:generate": "prisma generate",
     "prisma:migrate": "prisma migrate dev",
     "prisma:studio": "prisma studio",
@@ -24,6 +24,7 @@
   "license": "UNLICENSED",
   "private": true,
   "dependencies": {
+    "@prisma/client": "^5.20.0",
     "bcrypt": "^5.1.1",
     "cloudinary": "^2.11.0",
     "cors": "^2.8.5",
@@ -34,10 +35,10 @@
     "morgan": "^1.10.0",
     "multer": "^2.3.0",
     "node-cron": "^4.6.0",
+    "prisma": "^5.20.0",
     "zod": "^3.23.8"
   },
   "devDependencies": {
-    "@prisma/client": "^5.20.0",
     "@types/bcrypt": "^5.0.2",
     "@types/cors": "^2.8.17",
     "@types/express": "^5.0.0",
