@@ -54,17 +54,20 @@ app.use(
       // Allow requests with no origin (e.g. mobile apps, curl, postman)
       if (!origin) return callback(null, true);
 
-      // Allow in development or if matching allowed origins
-      if (
+      // Check if origin is allowed (localhost, 127.0.0.1, Netlify, Railway, or explicitly in allowed list)
+      const isAllowed =
         env.NODE_ENV === 'development' ||
         allowedOrigins.includes(origin) ||
         origin.startsWith('http://localhost:') ||
-        origin.startsWith('http://127.0.0.1:')
-      ) {
+        origin.startsWith('http://127.0.0.1:') ||
+        origin.endsWith('.netlify.app') ||
+        origin.endsWith('.up.railway.app');
+
+      if (isAllowed) {
         return callback(null, true);
       }
 
-      return callback(new Error(`Origin ${origin} not allowed by CORS policy`));
+      return callback(null, false);
     },
     credentials: true,
     methods: ['GET', 'POST', 'PUT', 'PATCH', 'DELETE', 'OPTIONS'],
