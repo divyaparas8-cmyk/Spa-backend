@@ -14,6 +14,7 @@ interface EnvConfig {
   WHATSAPP_ACCESS_TOKEN: string;
   WHATSAPP_BUSINESS_ACCOUNT_ID: string;
   WHATSAPP_WEBHOOK_VERIFY_TOKEN: string;
+  CORS_ORIGIN: string;
 }
 
 function getEnvVariable(key: string, required: boolean = true): string {
@@ -36,6 +37,7 @@ export const env: EnvConfig = {
   WHATSAPP_ACCESS_TOKEN: getEnvVariable('WHATSAPP_ACCESS_TOKEN', false),
   WHATSAPP_BUSINESS_ACCOUNT_ID: getEnvVariable('WHATSAPP_BUSINESS_ACCOUNT_ID', false),
   WHATSAPP_WEBHOOK_VERIFY_TOKEN: getEnvVariable('WHATSAPP_WEBHOOK_VERIFY_TOKEN', false),
+  CORS_ORIGIN: getEnvVariable('CORS_ORIGIN', false),
 };
 
 // Production readiness checks
