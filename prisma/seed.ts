@@ -55,7 +55,7 @@ async function main() {
       role: RoleName.TECHNICIAN,
       name: 'Bella',
       phone: '+237670000005',
-      specialties: ['Facial', 'Massage'],
+      specialties: ['Facial', 'Body Massage'],
     },
     {
       email: 'cleaner@gmail.com',
@@ -126,7 +126,7 @@ async function main() {
     },
     {
       name: 'Deep Tissue Massage',
-      category: 'Massage',
+      category: 'Body Massage',
       description: 'Therapeutic full-body deep muscle tension relief',
       duration: 60,
       price: 20000,
@@ -172,7 +172,7 @@ async function main() {
   const serviceStockToSeed = [
     {
       name: 'Massage Oil',
-      category: 'Massage',
+      category: 'Body Massage',
       quantity: 1800,
       unit: 'ml',
       isActive: true,

@@ -99,6 +99,40 @@ export class SpecialtiesService {
       id
     );
 
+    // If specialty name was changed, cascade to services, stock, and staff profile specialties
+    if (existing.name !== name) {
+      try {
+        await prisma.service.updateMany({
+          where: { category: existing.name },
+          data: { category: name },
+        });
+
+        await prisma.serviceStock.updateMany({
+          where: { category: existing.name },
+          data: { category: name },
+        });
+
+        const profiles = await prisma.staffProfile.findMany();
+        for (const profile of profiles) {
+          let specs: string[] = [];
+          if (Array.isArray(profile.specialties)) {
+            specs = profile.specialties as string[];
+          } else if (typeof profile.specialties === 'string') {
+            try { specs = JSON.parse(profile.specialties); } catch { specs = []; }
+          }
+          if (specs.includes(existing.name)) {
+            const updated = specs.map((s) => (s === existing.name ? name : s));
+            await prisma.staffProfile.update({
+              where: { id: profile.id },
+              data: { specialties: updated },
+            });
+          }
+        }
+      } catch (cascadeErr: any) {
+        console.warn('Non-fatal error cascading specialty rename:', cascadeErr?.message);
+      }
+    }
+
     return this.getSpecialtyById(id);
   }
 
@@ -114,6 +148,28 @@ export class SpecialtiesService {
         `Cannot delete specialty "${specialty.name}" because it is currently assigned to ${servicesCount} service(s). Please deactivate it instead.`,
         HTTP_STATUS.BAD_REQUEST
       );
+    }
+
+    // Clean up deleted specialty from staff profile specialties
+    try {
+      const profiles = await prisma.staffProfile.findMany();
+      for (const profile of profiles) {
+        let specs: string[] = [];
+        if (Array.isArray(profile.specialties)) {
+          specs = profile.specialties as string[];
+        } else if (typeof profile.specialties === 'string') {
+          try { specs = JSON.parse(profile.specialties); } catch { specs = []; }
+        }
+        if (specs.includes(specialty.name)) {
+          const updated = specs.filter((s) => s !== specialty.name);
+          await prisma.staffProfile.update({
+            where: { id: profile.id },
+            data: { specialties: updated },
+          });
+        }
+      }
+    } catch (cleanupErr: any) {
+      console.warn('Non-fatal error cleaning up deleted specialty from staff profiles:', cleanupErr?.message);
     }
 
     await prisma.$executeRawUnsafe('DELETE FROM `Specialty` WHERE id = ?', id);

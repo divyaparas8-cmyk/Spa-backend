@@ -19,6 +19,7 @@ export class UsersService {
           specialties = [];
         }
       }
+      specialties = specialties.map((s) => (s === 'Massage' ? 'Body Massage' : s));
     }
 
     return {
@@ -90,7 +91,9 @@ export class UsersService {
     const passwordToHash = input.password && input.password.trim() ? input.password.trim() : '123456';
     const passwordHash = await bcrypt.hash(passwordToHash, 10);
 
-    const specialtiesJson = Array.isArray(input.specialties) ? input.specialties : [];
+    const specialtiesJson = (Array.isArray(input.specialties) ? input.specialties : []).map(
+      (s: string) => (s === 'Massage' ? 'Body Massage' : s)
+    );
 
     const user = await prisma.user.create({
       data: {
@@ -171,7 +174,8 @@ export class UsersService {
       profileUpdates.phone = input.username ? input.username.trim() : null;
     }
     if (input.specialties !== undefined) {
-      profileUpdates.specialties = Array.isArray(input.specialties) ? input.specialties : [];
+      const specs = Array.isArray(input.specialties) ? input.specialties : [];
+      profileUpdates.specialties = specs.map((s: string) => (s === 'Massage' ? 'Body Massage' : s));
     }
 
     await prisma.$transaction(async (tx) => {
