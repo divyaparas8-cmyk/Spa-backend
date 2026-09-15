@@ -57,7 +57,7 @@ export class AppointmentsService {
       .join(', ');
 
     // Parse appointmentDate
-    const appointmentDate = new Date(data.appointmentDate);
+    const appointmentDate = new Date(data.appointmentDate + 'T12:00:00');
 
     // 4. Create Appointment + AppointmentService records in transaction
     const appointment = await prisma.$transaction(async (tx) => {
@@ -128,7 +128,7 @@ export class AppointmentsService {
     }
 
     if (query.date) {
-      where.appointmentDate = new Date(query.date);
+      where.appointmentDate = new Date(query.date + 'T12:00:00');
     }
 
     if (query.status) {
