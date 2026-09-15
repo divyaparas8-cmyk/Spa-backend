@@ -24,22 +24,55 @@ export class ClientsService {
     }
 
     // 2. Client Acquisition Tracking Business Rule:
-    // If technician creates client: introducedByEmployeeId must store logged-in employee. Do not trust frontend.
-    // Source: STAFF_REFERRAL should auto assign when employee creates client.
+    // When the logged-in user is a MANAGER:
+    // - Client is created normally (DIRECT).
+    // - No referral attribution, no employee referral commission, no Manager commission.
+    // - Even if referral info is sent manually via API by a Manager, it is stripped.
     let introducedByEmployeeId: string | null = null;
     let source: ClientSource = ClientSource.DIRECT;
+    let referredByClientId: string | null = null;
+    let recommendedByName: string | null = null;
+    let recommendedByPhone: string | null = null;
 
-    if (authUser.role === 'TECHNICIAN') {
+    if (authUser.role === 'MANAGER') {
+      // Manager client creation: strictly normal DIRECT client with no referral attribution
+      introducedByEmployeeId = null;
+      source = ClientSource.DIRECT;
+      referredByClientId = null;
+      recommendedByName = null;
+      recommendedByPhone = null;
+    } else if (authUser.role === 'TECHNICIAN') {
+      // Technician creates client: auto-attribute to technician
       introducedByEmployeeId = authUser.id;
       source = ClientSource.STAFF_REFERRAL;
     } else {
+      // Other staff (e.g. RECEPTION):
       if (data.introducedByEmployeeId) {
-        introducedByEmployeeId = data.introducedByEmployeeId;
-        source = ClientSource.STAFF_REFERRAL;
+        // Verify introducedByEmployeeId is an eligible staff member (NOT a Manager)
+        const employee = await prisma.user.findUnique({
+          where: { id: data.introducedByEmployeeId },
+          include: { role: true },
+        });
+        if (employee && employee.role?.name !== 'MANAGER') {
+          introducedByEmployeeId = data.introducedByEmployeeId;
+          source = ClientSource.STAFF_REFERRAL;
+        } else {
+          // Manager can never be an introducedBy employee
+          introducedByEmployeeId = null;
+          source = ClientSource.DIRECT;
+        }
       } else if (data.referredByClientId) {
+        referredByClientId = data.referredByClientId;
         source = ClientSource.CLIENT_REFERRAL;
       } else if (data.source) {
         source = data.source;
+      }
+
+      if (data.recommendedByName) {
+        recommendedByName = data.recommendedByName.trim() || null;
+      }
+      if (data.recommendedByPhone) {
+        recommendedByPhone = data.recommendedByPhone.trim() || null;
       }
     }
 
@@ -58,7 +91,9 @@ export class ClientsService {
         anniversary,
         source,
         introducedByEmployeeId,
-        referredByClientId: data.referredByClientId || null,
+        referredByClientId,
+        recommendedByName,
+        recommendedByPhone,
         isActive: true,
         status: 'ACTIVE',
       },

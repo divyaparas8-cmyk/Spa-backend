@@ -10,6 +10,8 @@ export interface CreateClientInput {
   source?: ClientSource;
   introducedByEmployeeId?: string | null;
   referredByClientId?: string | null;
+  recommendedByName?: string | null;
+  recommendedByPhone?: string | null;
 }
 
 export interface UpdateClientInput {

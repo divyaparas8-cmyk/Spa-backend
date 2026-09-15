@@ -10,6 +10,8 @@ export const createClientSchema = z.object({
   source: z.enum(['DIRECT', 'STAFF_REFERRAL', 'CLIENT_REFERRAL']).optional(),
   introducedByEmployeeId: z.string().uuid().optional().nullable(),
   referredByClientId: z.string().uuid().optional().nullable(),
+  recommendedByName: z.string().optional().nullable(),
+  recommendedByPhone: z.string().optional().nullable(),
 });
 
 export const updateClientSchema = z.object({
