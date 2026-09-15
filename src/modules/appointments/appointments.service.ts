@@ -302,15 +302,8 @@ export class AppointmentsService {
         throw new AppError('Only Manager and Reception can mark appointments as Late or No-Show', HTTP_STATUS.FORBIDDEN);
       }
 
-      if (currentStatus === AppointmentStatus.SCHEDULED && newStatus === AppointmentStatus.COMPLETED) {
-        throw new AppError(
-          'Technician cannot complete appointment directly from SCHEDULED. Must transition to IN_PROGRESS first.',
-          HTTP_STATUS.BAD_REQUEST
-        );
-      }
-
-      if (currentStatus === AppointmentStatus.SCHEDULED && newStatus !== AppointmentStatus.IN_PROGRESS) {
-        throw new AppError('From SCHEDULED, technician may only transition to IN_PROGRESS', HTTP_STATUS.BAD_REQUEST);
+      if (currentStatus === AppointmentStatus.SCHEDULED && newStatus !== AppointmentStatus.IN_PROGRESS && newStatus !== AppointmentStatus.COMPLETED) {
+        throw new AppError('From SCHEDULED, technician may only transition to IN_PROGRESS or COMPLETED', HTTP_STATUS.BAD_REQUEST);
       }
 
       if (currentStatus === AppointmentStatus.IN_PROGRESS && newStatus !== AppointmentStatus.COMPLETED) {

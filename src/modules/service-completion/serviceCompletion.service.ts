@@ -40,10 +40,14 @@ export class ServiceCompletionService {
       throw new AppError('Service definition not found for this appointment service', HTTP_STATUS.BAD_REQUEST);
     }
 
-    // 2. Requirement: Service can be closed ONLY when Appointment status = IN_PROGRESS
-    if (appointment.status !== AppointmentStatus.IN_PROGRESS) {
+    // 2. Requirement: Service can be closed when Appointment is active (IN_PROGRESS, SCHEDULED, or LATE)
+    if (
+      appointment.status !== AppointmentStatus.IN_PROGRESS &&
+      appointment.status !== AppointmentStatus.SCHEDULED &&
+      appointment.status !== AppointmentStatus.LATE
+    ) {
       throw new AppError(
-        `Service can only be closed when appointment is IN_PROGRESS (current status: ${appointment.status})`,
+        `Service can only be closed for active appointments (current status: ${appointment.status})`,
         HTTP_STATUS.BAD_REQUEST
       );
     }
@@ -139,6 +143,12 @@ export class ServiceCompletionService {
             performedBy: authUser.id,
           },
         });
+      } else if (appointment.status !== AppointmentStatus.IN_PROGRESS) {
+        await tx.appointment.update({
+          where: { id: appointment.id },
+          data: { status: AppointmentStatus.IN_PROGRESS },
+        });
+        currentAppointmentStatus = AppointmentStatus.IN_PROGRESS;
       }
 
       return {
