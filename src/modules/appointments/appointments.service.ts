@@ -330,7 +330,11 @@ export class AppointmentsService {
     }
 
     const updateData: any = {};
-    if (data.appointmentDate) updateData.appointmentDate = new Date(data.appointmentDate);
+    if (data.appointmentDate) {
+      updateData.appointmentDate = new Date(
+        data.appointmentDate + (data.appointmentDate.includes('T') ? '' : 'T12:00:00')
+      );
+    }
     if (data.appointmentTime) {
       const timeMins = timeToMinutes(data.appointmentTime);
       if (timeMins < 10 * 60 || timeMins > 21 * 60) {

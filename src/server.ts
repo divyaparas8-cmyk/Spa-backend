@@ -1,6 +1,9 @@
+// Configure Douala, Cameroon (UTC+1) timezone across the entire Node.js runtime
+process.env.TZ = 'Africa/Douala';
+
 import app from './app';
 import { env } from './config/env';
-import { APP_NAME } from './config/constants';
+import { APP_NAME, APP_TIMEZONE } from './config/constants';
 import { logger } from './utils/logger';
 import { initMediaCleanupScheduler } from './modules/media/mediaCleanup.scheduler';
 import { initWhatsAppScheduler } from './modules/whatsapp/whatsapp.scheduler';
@@ -9,6 +12,7 @@ const PORT = env.PORT;
 
 app.listen(PORT, () => {
   logger.info(`${APP_NAME} Backend running on port ${PORT}`);
+  logger.info(`Timezone: ${APP_TIMEZONE} (${process.env.TZ})`);
   logger.info(`Environment: ${env.NODE_ENV}`);
   logger.info(`Health check: http://localhost:${PORT}/`);
   logger.info(`Cloudinary Cloud: ${env.CLOUDINARY_CLOUD_NAME}`);

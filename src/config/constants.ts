@@ -6,6 +6,7 @@
  */
 
 export const APP_NAME = 'OMEGA SPA POS';
+export const APP_TIMEZONE = 'Africa/Douala';
 
 export const API_PREFIX = '/api/v1';
 
