@@ -25,7 +25,7 @@ export const updateAppointmentSchema = z.object({
   noShowReason: z.string().optional().nullable(),
 });
 
-// Notice: CANCELLED is deliberately omitted per rule: "Do not add CANCELLED"
+// CANCELLED is handled via a dedicated PATCH /:id/cancel endpoint, not through generic status change
 export const changeAppointmentStatusSchema = z.object({
   status: z.enum([
     AppointmentStatus.SCHEDULED,

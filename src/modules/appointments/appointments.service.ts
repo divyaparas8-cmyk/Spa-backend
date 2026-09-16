@@ -44,7 +44,7 @@ export class AppointmentsService {
       where: {
         appointmentDate,
         mainTechnicianId: technicianId,
-        status: { notIn: [AppointmentStatus.NO_SHOW] },
+        status: { notIn: [AppointmentStatus.NO_SHOW, AppointmentStatus.CANCELLED] },
         ...(excludeAppointmentId ? { id: { not: excludeAppointmentId } } : {}),
       },
       include: {
@@ -452,6 +452,59 @@ export class AppointmentsService {
           clientId: appointment.clientId,
           action: 'STATUS_CHANGED',
           details: `Appointment status changed from ${currentStatus} to ${newStatus} by ${authUser.role}`,
+          performedBy: authUser.id,
+        },
+      });
+    });
+
+    return this.getAppointmentById(id, authUser);
+  }
+
+  async cancelAppointment(id: string, authUser: AuthContextUser) {
+    const appointment = await prisma.appointment.findUnique({
+      where: { id },
+      include: { appointmentServices: true },
+    });
+
+    if (!appointment) {
+      throw new AppError('Appointment not found', HTTP_STATUS.NOT_FOUND);
+    }
+
+    if (appointment.status === AppointmentStatus.CANCELLED) {
+      throw new AppError('Appointment is already cancelled', HTTP_STATUS.BAD_REQUEST);
+    }
+
+    if (appointment.status === AppointmentStatus.COMPLETED) {
+      throw new AppError('Cannot cancel a completed appointment', HTTP_STATUS.BAD_REQUEST);
+    }
+
+    await prisma.$transaction(async (tx) => {
+      // Update appointment status to CANCELLED
+      await tx.appointment.update({
+        where: { id },
+        data: {
+          status: AppointmentStatus.CANCELLED,
+          notes: appointment.notes
+            ? `${appointment.notes}\n[Cancelled by ${authUser.role} at ${new Date().toISOString()}]`
+            : `[Cancelled by ${authUser.role} at ${new Date().toISOString()}]`,
+        },
+      });
+
+      // Cancel all child appointment services
+      await tx.appointmentService.updateMany({
+        where: {
+          appointmentId: id,
+          status: { in: [AppointmentServiceStatus.BOOKED, AppointmentServiceStatus.IN_PROGRESS] },
+        },
+        data: { status: AppointmentServiceStatus.CANCELLED },
+      });
+
+      // Log ClientHistory
+      await tx.clientHistory.create({
+        data: {
+          clientId: appointment.clientId,
+          action: 'APPOINTMENT_CANCELLED',
+          details: `Appointment on ${appointment.appointmentDate.toISOString().split('T')[0]} at ${appointment.appointmentTime} cancelled by ${authUser.role}`,
           performedBy: authUser.id,
         },
       });

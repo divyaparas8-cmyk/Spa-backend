@@ -43,6 +43,13 @@ router.patch(
   (req, res, next) => appointmentsController.updateAppointment(req, res, next)
 );
 
+// PATCH /api/v1/appointments/:id/cancel — Cancel Appointment (Manager, Reception only)
+router.patch(
+  '/:id/cancel',
+  allowRoles('MANAGER', 'RECEPTION'),
+  (req, res, next) => appointmentsController.cancelAppointment(req, res, next)
+);
+
 // PATCH /api/v1/appointments/:id/status — Status Change Flow (Manager, Reception, Technician)
 router.patch(
   '/:id/status',

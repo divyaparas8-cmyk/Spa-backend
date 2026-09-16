@@ -54,6 +54,7 @@ enum AppointmentStatus {
   COMPLETED
   LATE
   NO_SHOW
+  CANCELLED
 }
 
 enum AppointmentServiceStatus {
