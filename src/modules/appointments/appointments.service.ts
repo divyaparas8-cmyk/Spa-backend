@@ -10,7 +10,73 @@ import {
   AuthContextUser,
 } from './appointments.types';
 
+// Helper: convert "HH:MM" to total minutes from midnight
+function timeToMinutes(timeStr: string): number {
+  const [h, m] = timeStr.split(':').map(Number);
+  return (h || 0) * 60 + (m || 0);
+}
+
+// Helper: convert total minutes back to "HH:MM"
+function minutesToTime(mins: number): string {
+  const h = Math.floor(mins / 60);
+  const m = mins % 60;
+  return `${String(h).padStart(2, '0')}:${String(m).padStart(2, '0')}`;
+}
+
 export class AppointmentsService {
+  /**
+   * Check if a technician has a conflicting appointment on a given date/time.
+   * Throws AppError if conflict found.
+   */
+  private async checkTechnicianConflict(
+    technicianId: string,
+    dateStr: string,
+    startTime: string,
+    totalDurationMinutes: number,
+    excludeAppointmentId?: string
+  ): Promise<void> {
+    const appointmentDate = new Date(dateStr + 'T12:00:00');
+    const newStartMins = timeToMinutes(startTime);
+    const newEndMins = newStartMins + totalDurationMinutes;
+
+    // Find all non-cancelled appointments for this technician on this date
+    const existingAppointments = await prisma.appointment.findMany({
+      where: {
+        appointmentDate,
+        mainTechnicianId: technicianId,
+        status: { notIn: [AppointmentStatus.NO_SHOW] },
+        ...(excludeAppointmentId ? { id: { not: excludeAppointmentId } } : {}),
+      },
+      include: {
+        appointmentServices: {
+          include: {
+            service: { select: { duration: true } },
+          },
+        },
+      },
+    });
+
+    for (const existing of existingAppointments) {
+      const existingStartMins = timeToMinutes(existing.appointmentTime);
+      // Calculate total duration from appointment services
+      const existingTotalDuration = existing.appointmentServices.reduce(
+        (sum, as) => sum + (as.service?.duration || 30),
+        0
+      ) || 30; // Default 30 min if no services
+      const existingEndMins = existingStartMins + existingTotalDuration;
+
+      // Overlap check: newStart < existingEnd AND newEnd > existingStart
+      if (newStartMins < existingEndMins && newEndMins > existingStartMins) {
+        const existingStartStr = existing.appointmentTime;
+        const existingEndStr = minutesToTime(existingEndMins);
+        throw new AppError(
+          `Technician is not available during this time. Existing appointment: ${existingStartStr} – ${existingEndStr}. Please select another time or technician.`,
+          HTTP_STATUS.CONFLICT
+        );
+      }
+    }
+  }
+
   async createAppointment(data: CreateAppointmentInput, authUser: AuthContextUser) {
     // 1. Validate Client exists
     const client = await prisma.client.findUnique({
@@ -50,6 +116,19 @@ export class AppointmentsService {
     // Map service prices
     const serviceMap = new Map(servicesInDb.map((s) => [s.id, s]));
 
+    // 4. Calculate total duration and check technician availability
+    const totalDuration = data.services.reduce((sum, item) => {
+      const svc = serviceMap.get(item.serviceId);
+      return sum + (svc?.duration || 30);
+    }, 0);
+
+    await this.checkTechnicianConflict(
+      data.mainTechnicianId,
+      data.appointmentDate,
+      data.appointmentTime.trim(),
+      totalDuration
+    );
+
     // Service summary
     const serviceNames = data.services
       .map((item) => serviceMap.get(item.serviceId)?.name)
@@ -59,7 +138,7 @@ export class AppointmentsService {
     // Parse appointmentDate
     const appointmentDate = new Date(data.appointmentDate + 'T12:00:00');
 
-    // 4. Create Appointment + AppointmentService records in transaction
+    // 5. Create Appointment + AppointmentService records in transaction
     const appointment = await prisma.$transaction(async (tx) => {
       const appt = await tx.appointment.create({
         data: {
@@ -229,7 +308,14 @@ export class AppointmentsService {
   }
 
   async updateAppointment(id: string, data: UpdateAppointmentInput, authUser: AuthContextUser) {
-    const appointment = await prisma.appointment.findUnique({ where: { id } });
+    const appointment = await prisma.appointment.findUnique({
+      where: { id },
+      include: {
+        appointmentServices: {
+          include: { service: { select: { duration: true } } },
+        },
+      },
+    });
     if (!appointment) {
       throw new AppError('Appointment not found', HTTP_STATUS.NOT_FOUND);
     }
@@ -250,6 +336,20 @@ export class AppointmentsService {
         throw new AppError('Assigned technician not found or inactive', HTTP_STATUS.BAD_REQUEST);
       }
       updateData.mainTechnicianId = data.mainTechnicianId;
+    }
+
+    // Check technician conflict if date, time, or technician changed
+    const hasScheduleChange = data.appointmentDate || data.appointmentTime || data.mainTechnicianId;
+    if (hasScheduleChange) {
+      const checkTechId = data.mainTechnicianId || appointment.mainTechnicianId;
+      const checkDate = data.appointmentDate || appointment.appointmentDate.toISOString().split('T')[0];
+      const checkTime = data.appointmentTime?.trim() || appointment.appointmentTime;
+      const totalDuration = appointment.appointmentServices.reduce(
+        (sum, as) => sum + (as.service?.duration || 30),
+        0
+      ) || 30;
+
+      await this.checkTechnicianConflict(checkTechId, checkDate, checkTime, totalDuration, id);
     }
 
     const updated = await prisma.appointment.update({
@@ -282,13 +382,7 @@ export class AppointmentsService {
     const currentStatus = appointment.status;
     const newStatus = data.status;
 
-    // TECHNICIAN STATUS RULES:
-    // Allowed:
-    // SCHEDULED -> IN_PROGRESS
-    // IN_PROGRESS -> COMPLETED
-    // Not allowed:
-    // SCHEDULED -> COMPLETED directly
-    // Setting LATE or NO_SHOW
+    // TECHNICIAN STATUS RULES
     if (authUser.role === 'TECHNICIAN') {
       const isAssigned =
         appointment.mainTechnicianId === authUser.id ||
