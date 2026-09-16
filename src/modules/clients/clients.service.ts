@@ -239,18 +239,18 @@ export class ClientsService {
           select: { id: true, name: true, phone: true },
         },
         appointments: {
-          orderBy: { appointmentDate: 'desc' },
-          take: 1,
-          select: {
-            appointmentDate: true,
-            serviceSummary: true,
+          orderBy: [{ appointmentDate: 'desc' }, { appointmentTime: 'desc' }],
+          include: {
             appointmentServices: {
-              take: 1,
-              select: {
-                service: {
-                  select: { name: true },
+              include: {
+                service: { select: { id: true, name: true, category: true, price: true } },
+                technician: {
+                  include: { staffProfile: { select: { name: true } } },
                 },
               },
+            },
+            mainTechnician: {
+              include: { staffProfile: { select: { name: true } } },
             },
           },
         },
@@ -284,6 +284,7 @@ export class ClientsService {
       lastService: latestServiceName,
       lastServiceDate: latestServiceDate,
       appointmentsCount: _count.appointments,
+      appointments: appointments || [],
     };
   }
 
