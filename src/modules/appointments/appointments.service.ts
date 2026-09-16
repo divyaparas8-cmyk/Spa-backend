@@ -78,6 +78,15 @@ export class AppointmentsService {
   }
 
   async createAppointment(data: CreateAppointmentInput, authUser: AuthContextUser) {
+    // 0. Validate Operating Hours: 10:00 AM to 9:00 PM (10:00 - 21:00)
+    const timeMins = timeToMinutes(data.appointmentTime);
+    if (timeMins < 10 * 60 || timeMins > 21 * 60) {
+      throw new AppError(
+        'Appointments can only be booked between 10:00 AM and 9:00 PM (10:00 – 21:00)',
+        HTTP_STATUS.BAD_REQUEST
+      );
+    }
+
     // 1. Validate Client exists
     const client = await prisma.client.findUnique({
       where: { id: data.clientId },
@@ -322,7 +331,16 @@ export class AppointmentsService {
 
     const updateData: any = {};
     if (data.appointmentDate) updateData.appointmentDate = new Date(data.appointmentDate);
-    if (data.appointmentTime) updateData.appointmentTime = data.appointmentTime.trim();
+    if (data.appointmentTime) {
+      const timeMins = timeToMinutes(data.appointmentTime);
+      if (timeMins < 10 * 60 || timeMins > 21 * 60) {
+        throw new AppError(
+          'Appointments can only be booked between 10:00 AM and 9:00 PM (10:00 – 21:00)',
+          HTTP_STATUS.BAD_REQUEST
+        );
+      }
+      updateData.appointmentTime = data.appointmentTime.trim();
+    }
     if (data.notes !== undefined) updateData.notes = data.notes ? data.notes.trim() : null;
     if (data.lateMinutes !== undefined) updateData.lateMinutes = data.lateMinutes;
     if (data.noShowReason !== undefined) updateData.noShowReason = data.noShowReason;
