@@ -7,7 +7,7 @@ import {
   invoiceQuerySchema,
 } from './invoices.validation';
 import { HTTP_STATUS } from '../../config/constants';
-import { AuthContextUser } from './invoices.types';
+import { AuthContextUser, CreateInvoiceInput } from './invoices.types';
 
 function getParamId(req: Request, key: string = 'id'): string {
   const val = req.params[key];
@@ -17,7 +17,7 @@ function getParamId(req: Request, key: string = 'id'): string {
 export class InvoicesController {
   async createInvoice(req: Request, res: Response, next: NextFunction) {
     try {
-      const validated = createInvoiceSchema.parse(req.body);
+      const validated = createInvoiceSchema.parse(req.body) as CreateInvoiceInput;
       const authUser = (req as any).user as AuthContextUser;
       const invoice = await invoicesService.createInvoice(validated, authUser);
 
