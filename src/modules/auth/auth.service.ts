@@ -7,14 +7,19 @@ import { LoginInput, LoginResponseData, CurrentUserProfile } from './auth.types'
 
 export class AuthService {
   async login(input: LoginInput): Promise<LoginResponseData> {
-    const emailNormalized = input.email.trim().toLowerCase();
+    const inputClean = input.email.trim();
+    const emailNormalized = inputClean.toLowerCase();
+    const phoneNoSpaces = inputClean.replace(/\s+/g, '');
+    const phoneDigits = inputClean.replace(/\D/g, '');
 
-    // Find user by email or staffProfile username/phone
+    // Find user by email or staffProfile phone/username
     const user = await prisma.user.findFirst({
       where: {
         OR: [
           { email: emailNormalized },
-          { staffProfile: { phone: emailNormalized } },
+          { staffProfile: { phone: inputClean } },
+          { staffProfile: { phone: phoneNoSpaces } },
+          ...(phoneDigits ? [{ staffProfile: { phone: phoneDigits } }] : []),
         ],
       },
       include: {

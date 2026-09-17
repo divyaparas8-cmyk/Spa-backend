@@ -67,17 +67,25 @@ export class UsersService {
   }
 
   async createUser(input: CreateUserInput): Promise<UserResponse> {
-    const usernameClean = (input.username || input.name || '').trim().toLowerCase().replace(/\s+/g, '');
+    const rawPhone = (input.phone || input.username || '').trim();
+    const phoneClean = rawPhone.replace(/\s+/g, '');
+    const usernameClean = (input.username || input.phone || input.name || '').trim().toLowerCase().replace(/\s+/g, '');
     const emailNormalized = (input.email && input.email.trim())
       ? input.email.trim().toLowerCase()
       : `${usernameClean || 'user' + Date.now()}@gmail.com`;
 
-    // Check if email already exists
-    const existing = await prisma.user.findUnique({
-      where: { email: emailNormalized },
+    // Check if user already exists with this phone or email
+    const existing = await prisma.user.findFirst({
+      where: {
+        OR: [
+          { email: emailNormalized },
+          ...(rawPhone ? [{ staffProfile: { phone: rawPhone } }] : []),
+          ...(phoneClean && phoneClean !== rawPhone ? [{ staffProfile: { phone: phoneClean } }] : []),
+        ],
+      },
     });
     if (existing) {
-      throw new AppError('A user with this email or username already exists', HTTP_STATUS.CONFLICT);
+      throw new AppError('A staff member with this mobile number or email already exists', HTTP_STATUS.CONFLICT);
     }
 
     const roleUpper = input.role.toUpperCase() as any;
@@ -104,7 +112,7 @@ export class UsersService {
         staffProfile: {
           create: {
             name: input.name.trim(),
-            phone: input.username ? input.username.trim() : null,
+            phone: rawPhone || null,
             specialties: specialtiesJson,
           },
         },
@@ -170,8 +178,9 @@ export class UsersService {
     if (input.name !== undefined && input.name.trim()) {
       profileUpdates.name = input.name.trim();
     }
-    if (input.username !== undefined) {
-      profileUpdates.phone = input.username ? input.username.trim() : null;
+    if (input.phone !== undefined || input.username !== undefined) {
+      const p = input.phone !== undefined ? input.phone : input.username;
+      profileUpdates.phone = p ? p.trim() : null;
     }
     if (input.specialties !== undefined) {
       const specs = Array.isArray(input.specialties) ? input.specialties : [];
