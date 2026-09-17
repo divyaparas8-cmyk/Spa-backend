@@ -41,6 +41,98 @@ export interface AttendanceFilters {
   status?: string;
 }
 
+export const COMPANY_TIMEZONE = 'Africa/Douala';
+
+/**
+ * Returns today's date formatted as YYYY-MM-DD in Africa/Douala timezone
+ */
+export function getCompanyTodayDateStr(): string {
+  return new Intl.DateTimeFormat('en-CA', {
+    timeZone: COMPANY_TIMEZONE,
+    year: 'numeric',
+    month: '2-digit',
+    day: '2-digit',
+  }).format(new Date());
+}
+
+/**
+ * Formats a Date or ISO string into 12-hour AM/PM string in Africa/Douala
+ */
+export function formatTimeInCompanyTz(d: Date | string | null | undefined): string | null {
+  if (!d) return null;
+  const dateObj = typeof d === 'string' ? new Date(d) : d;
+  if (isNaN(dateObj.getTime())) return null;
+  return new Intl.DateTimeFormat('en-US', {
+    timeZone: COMPANY_TIMEZONE,
+    hour: '2-digit',
+    minute: '2-digit',
+    hour12: true,
+  }).format(dateObj);
+}
+
+/**
+ * Formats a Date or ISO string into 24-hour "HH:mm" string in Africa/Douala
+ */
+export function format24HourInCompanyTz(d: Date | string | null | undefined): string | null {
+  if (!d) return null;
+  const dateObj = typeof d === 'string' ? new Date(d) : d;
+  if (isNaN(dateObj.getTime())) return null;
+  return new Intl.DateTimeFormat('en-GB', {
+    timeZone: COMPANY_TIMEZONE,
+    hour: '2-digit',
+    minute: '2-digit',
+    hour12: false,
+  }).format(dateObj);
+}
+
+/**
+ * Converts a company date (YYYY-MM-DD) and 24-hour time (HH:mm) into a UTC Date object.
+ * Africa/Douala is WAT (UTC+01:00) year-round without DST.
+ */
+export function parseCompanyTimeToUtc(dateStr: string, timeStr: string): Date {
+  const cleanDate = dateStr.slice(0, 10);
+  const parts = timeStr.trim().split(':');
+  const h = String(parseInt(parts[0] || '0', 10)).padStart(2, '0');
+  const m = String(parseInt(parts[1] || '0', 10)).padStart(2, '0');
+  const isoWithOffset = `${cleanDate}T${h}:${m}:00+01:00`;
+  const parsed = new Date(isoWithOffset);
+  if (!isNaN(parsed.getTime())) {
+    return parsed;
+  }
+  const dateUtc = normalizeDate(cleanDate);
+  const utcMs = dateUtc.getTime() + (parseInt(h, 10) - 1) * 3600000 + parseInt(m, 10) * 60000;
+  return new Date(utcMs);
+}
+
+/**
+ * Calculates duration in minutes and returns "Xh Ym" string
+ */
+export function calculateDuration(
+  clockIn: Date | string | null | undefined,
+  clockOut: Date | string | null | undefined,
+  fallbackWorkingHours?: any
+): string | null {
+  if (clockIn && clockOut) {
+    const inMs = new Date(clockIn).getTime();
+    const outMs = new Date(clockOut).getTime();
+    if (!isNaN(inMs) && !isNaN(outMs) && outMs >= inMs) {
+      const diffMinutes = Math.max(0, Math.round((outMs - inMs) / 60000));
+      const h = Math.floor(diffMinutes / 60);
+      const m = diffMinutes % 60;
+      return `${h}h ${m}m`;
+    }
+  }
+  if (fallbackWorkingHours !== null && fallbackWorkingHours !== undefined) {
+    const num = Number(fallbackWorkingHours);
+    if (!isNaN(num)) {
+      const h = Math.floor(num);
+      const m = Math.round((num - h) * 60);
+      return `${h}h ${m}m`;
+    }
+  }
+  return null;
+}
+
 /**
  * Normalizes a date string or Date to midnight UTC Date for Prisma @db.Date
  */
@@ -56,8 +148,9 @@ function normalizeDate(d?: string | Date): Date {
     dt.setUTCHours(0, 0, 0, 0);
     return dt;
   }
-  const now = new Date();
-  return new Date(Date.UTC(now.getFullYear(), now.getMonth(), now.getDate()));
+  const todayStr = getCompanyTodayDateStr();
+  const parts = todayStr.split('-').map(Number);
+  return new Date(Date.UTC(parts[0], parts[1] - 1, parts[2]));
 }
 
 /**
@@ -83,37 +176,20 @@ export function formatAttendanceRecord(att: any) {
     dateStr = att.date.slice(0, 10);
   }
 
-  const formatTime = (d: Date | null | undefined) => {
-    if (!d) return null;
-    return new Date(d).toLocaleTimeString('en-US', {
-      hour: '2-digit',
-      minute: '2-digit',
-      hour12: true,
-    });
-  };
-
-  const calcHoursStr = (hours: any) => {
-    if (hours === null || hours === undefined) return null;
-    const num = Number(hours);
-    const h = Math.floor(num);
-    const m = Math.round((num - h) * 60);
-    return `${h}h ${m}m`;
-  };
-
   return {
     id: att.id,
     employeeId: att.employeeId,
     employeeName,
     employeeRole,
     date: dateStr,
-    clockIn: formatTime(att.clockInTime),
+    clockIn: formatTimeInCompanyTz(att.clockInTime),
     clockInRaw: att.clockInTime ? new Date(att.clockInTime).toISOString() : null,
     clockInPhoto: att.clockInPhoto || null,
     photo: att.clockInPhoto || null,
-    clockOut: formatTime(att.clockOutTime),
+    clockOut: formatTimeInCompanyTz(att.clockOutTime),
     clockOutRaw: att.clockOutTime ? new Date(att.clockOutTime).toISOString() : null,
     clockOutPhoto: att.clockOutPhoto || null,
-    workingHours: calcHoursStr(att.workingHours),
+    workingHours: calculateDuration(att.clockInTime, att.clockOutTime, att.workingHours),
     status: att.status ? att.status.toLowerCase() : 'not_started',
     isManual: Boolean(att.isManual),
     isManualEntry: Boolean(att.isManual),
@@ -225,7 +301,7 @@ class AttendanceService {
       },
     });
 
-    logger.info(`Attendance Clock In: ${employee.staffProfile?.name || employee.email} on ${targetDate.toISOString().slice(0, 10)}`);
+    logger.info(`[Attendance Clock In] employee: ${employee.staffProfile?.name || employee.email}, targetDate: ${targetDate.toISOString().slice(0, 10)}, UTC now: ${now.toISOString()}, Douala time: ${formatTimeInCompanyTz(now)}`);
 
     return formatAttendanceRecord(record);
   }
@@ -316,7 +392,7 @@ class AttendanceService {
       },
     });
 
-    logger.info(`Attendance Clock Out: ${existing.employee?.staffProfile?.name || existing.employee?.email} on ${targetDate.toISOString().slice(0, 10)}`);
+    logger.info(`[Attendance Clock Out] employee: ${existing.employee?.staffProfile?.name || existing.employee?.email} on ${targetDate.toISOString().slice(0, 10)}, UTC now: ${now.toISOString()}, Douala time: ${formatTimeInCompanyTz(now)}, duration: ${calculateDuration(existing.clockInTime, now)}`);
 
     return formatAttendanceRecord(updated);
   }
@@ -440,7 +516,8 @@ class AttendanceService {
     if (!reason?.trim()) throw new AppError('Reason for manual entry is required', HTTP_STATUS.BAD_REQUEST);
     if (!clockInTime) throw new AppError('Clock In time is required', HTTP_STATUS.BAD_REQUEST);
 
-    const targetDate = normalizeDate(date);
+    const cleanDateStr = (date || getCompanyTodayDateStr()).slice(0, 10);
+    const targetDate = normalizeDate(cleanDateStr);
 
     // Check existing
     const existing = await prisma.attendance.findUnique({
@@ -470,19 +547,15 @@ class AttendanceService {
       photoUrl = photoBase64;
     }
 
-    // Calculate times
-    const [inH, inM] = clockInTime.split(':').map(Number);
-    const clockInDateTime = new Date(targetDate);
-    clockInDateTime.setHours(inH || 0, inM || 0, 0, 0);
+    // Calculate times strictly in Africa/Douala (UTC+01:00)
+    const clockInDateTime = parseCompanyTimeToUtc(cleanDateStr, clockInTime);
 
     let clockOutDateTime: Date | null = null;
     let workingHours: number | null = null;
 
     const isCompleted = status === 'completed' || Boolean(clockOutTime);
     if (isCompleted && clockOutTime) {
-      const [outH, outM] = clockOutTime.split(':').map(Number);
-      clockOutDateTime = new Date(targetDate);
-      clockOutDateTime.setHours(outH || 0, outM || 0, 0, 0);
+      clockOutDateTime = parseCompanyTimeToUtc(cleanDateStr, clockOutTime);
 
       const diffMs = clockOutDateTime.getTime() - clockInDateTime.getTime();
       if (diffMs > 0) {
@@ -540,7 +613,7 @@ class AttendanceService {
       },
     });
 
-    logger.info(`Manual Attendance Entry by manager ${managerId} for employee ${employeeId} on ${date}`);
+    logger.info(`[Attendance Manual Entry] manager: ${managerId}, employee: ${employeeId}, date: ${cleanDateStr}, Douala Clock In: ${clockInTime} -> UTC: ${clockInDateTime.toISOString()}, Douala Clock Out: ${clockOutTime || 'none'} -> UTC: ${clockOutDateTime ? clockOutDateTime.toISOString() : 'none'}`);
 
     return formatAttendanceRecord(record);
   }
