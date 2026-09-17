@@ -1,6 +1,6 @@
 import { loyaltyService } from '../loyalty/loyalty.service';
 import { commissionsService } from '../commissions/commissions.service';
-import { InvoiceStatus, InvoiceItemType, AppointmentServiceStatus, Prisma } from '@prisma/client';
+import { InvoiceStatus, InvoiceItemType, AppointmentStatus, AppointmentServiceStatus, Prisma } from '@prisma/client';
 import prisma from '../../config/database';
 import { AppError } from '../../middleware/errorHandler';
 import { HTTP_STATUS } from '../../config/constants';
@@ -43,20 +43,26 @@ export class InvoicesService {
       throw new AppError('Invoice already exists for this appointment', HTTP_STATUS.CONFLICT);
     }
 
-    // 3. Create invoice from COMPLETED appointment services only
-    const completedServices = appointment.appointmentServices.filter(
+    // 3. Create invoice from non-cancelled appointment services
+    let billableServices = appointment.appointmentServices.filter(
       (s) => s.status === AppointmentServiceStatus.COMPLETED
     );
 
-    if (completedServices.length === 0) {
+    if (billableServices.length === 0) {
+      billableServices = appointment.appointmentServices.filter(
+        (s) => s.status !== AppointmentServiceStatus.CANCELLED
+      );
+    }
+
+    if (billableServices.length === 0) {
       throw new AppError(
-        'Cannot create invoice: no completed appointment services found for this visit',
+        'Cannot create invoice: no billable appointment services found for this visit',
         HTTP_STATUS.BAD_REQUEST
       );
     }
 
-    // Calculate subtotal from completed services
-    let subtotal = completedServices.reduce((sum, s) => sum + Number(s.price), 0);
+    // Calculate subtotal from billable services
+    let subtotal = billableServices.reduce((sum, s) => sum + Number(s.price), 0);
 
     // Generate unique invoice number: INV-YYYYMMDD-XXXX
     const dateObj = new Date();
@@ -127,8 +133,25 @@ export class InvoicesService {
         },
       });
 
+      // Ensure billed appointment services and appointment are marked COMPLETED
+      await tx.appointmentService.updateMany({
+        where: {
+          appointmentId: appointment.id,
+          status: { in: [AppointmentServiceStatus.BOOKED, AppointmentServiceStatus.IN_PROGRESS] },
+        },
+        data: {
+          status: AppointmentServiceStatus.COMPLETED,
+          completedAt: new Date(),
+        },
+      });
+
+      await tx.appointment.update({
+        where: { id: appointment.id },
+        data: { status: AppointmentStatus.COMPLETED },
+      });
+
       // Snapshot service items
-      for (const s of completedServices) {
+      for (const s of billableServices) {
         await tx.invoiceItem.create({
           data: {
             invoiceId: created.id,
@@ -154,7 +177,7 @@ export class InvoicesService {
       }
 
       // Log ClientHistory
-      const totalItems = completedServices.length + retailItemsToCreate.length;
+      const totalItems = billableServices.length + retailItemsToCreate.length;
       await tx.clientHistory.create({
         data: {
           clientId: appointment.clientId,
