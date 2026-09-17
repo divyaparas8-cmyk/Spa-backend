@@ -37,7 +37,9 @@ export class AppointmentsService {
     totalDurationMinutes: number,
     excludeAppointmentId?: string
   ): Promise<void> {
-    const appointmentDate = new Date(dateStr + 'T12:00:00');
+    const cleanDate = dateStr.includes('T') ? dateStr.split('T')[0] : dateStr;
+    const startOfDay = new Date(`${cleanDate}T00:00:00.000Z`);
+    const endOfDay = new Date(`${cleanDate}T23:59:59.999Z`);
     const newStartMins = timeToMinutes(startTime);
     const newEndMins = newStartMins + totalDurationMinutes;
 
@@ -45,7 +47,10 @@ export class AppointmentsService {
     // the main technician OR assigned to any individual service
     const existingAppointments = await prisma.appointment.findMany({
       where: {
-        appointmentDate,
+        appointmentDate: {
+          gte: startOfDay,
+          lte: endOfDay,
+        },
         status: { notIn: [AppointmentStatus.NO_SHOW, AppointmentStatus.CANCELLED] },
         ...(excludeAppointmentId ? { id: { not: excludeAppointmentId } } : {}),
         OR: [
@@ -162,7 +167,8 @@ export class AppointmentsService {
       .join(', ');
 
     // Parse appointmentDate
-    const appointmentDate = new Date(data.appointmentDate + 'T12:00:00');
+    const cleanDate = data.appointmentDate.includes('T') ? data.appointmentDate.split('T')[0] : data.appointmentDate;
+    const appointmentDate = new Date(`${cleanDate}T00:00:00.000Z`);
 
     // 5. Create Appointment + AppointmentService records in transaction
     const appointment = await prisma.$transaction(async (tx) => {
@@ -348,9 +354,8 @@ export class AppointmentsService {
 
     const updateData: any = {};
     if (data.appointmentDate) {
-      updateData.appointmentDate = new Date(
-        data.appointmentDate + (data.appointmentDate.includes('T') ? '' : 'T12:00:00')
-      );
+      const cleanDate = data.appointmentDate.includes('T') ? data.appointmentDate.split('T')[0] : data.appointmentDate;
+      updateData.appointmentDate = new Date(`${cleanDate}T00:00:00.000Z`);
     }
     if (data.appointmentTime) {
       const timeMins = timeToMinutes(data.appointmentTime);
