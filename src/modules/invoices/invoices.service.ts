@@ -64,133 +64,156 @@ export class InvoicesService {
     // Calculate subtotal from billable services
     let subtotal = billableServices.reduce((sum, s) => sum + Number(s.price), 0);
 
-    // Generate unique invoice number: INV-YYYYMMDD-XXXX
-    const dateObj = new Date();
-    const dateStr = dateObj.toISOString().slice(0, 10).replace(/-/g, '');
-    const countToday = await prisma.invoice.count();
-    const invoiceNumber = `INV-${dateStr}-${String(countToday + 1).padStart(4, '0')}`;
-
     const invoiceStatus = data.status || InvoiceStatus.PENDING_PAYMENT;
 
-    // 4. In a transaction: Create Invoice, snapshot InvoiceItems, and handle RetailProduct stock decrement
-    const invoice = await prisma.$transaction(async (tx) => {
-      // Process retail products if requested
-      const retailItemsToCreate: any[] = [];
-      if (data.retailProducts && data.retailProducts.length > 0) {
-        for (const rp of data.retailProducts) {
-          const product = await tx.retailProduct.findUnique({
-            where: { id: rp.retailProductId },
-          });
+    // 4. Atomic invoice creation with retry-based unique number generation.
+    // Scopes count to today's date prefix and retries on P2002 (unique constraint collision).
+    const MAX_RETRIES = 5;
+    let lastError: any = null;
 
-          if (!product || !product.isActive) {
-            throw new AppError(`Retail product not found or inactive (${rp.retailProductId})`, HTTP_STATUS.NOT_FOUND);
+    for (let attempt = 0; attempt < MAX_RETRIES; attempt++) {
+      try {
+        const dateObj = new Date();
+        const dateStr = dateObj.toISOString().slice(0, 10).replace(/-/g, '');
+        const prefix = `INV-${dateStr}-`;
+
+        // Count only invoices with today's date prefix for a tighter sequence
+        const todayCount = await prisma.invoice.count({
+          where: { invoiceNumber: { startsWith: prefix } },
+        });
+
+        const invoiceNumber = `${prefix}${String(todayCount + 1 + attempt).padStart(4, '0')}`;
+
+        const invoice = await prisma.$transaction(async (tx) => {
+          // Process retail products if requested
+          const retailItemsToCreate: any[] = [];
+          if (data.retailProducts && data.retailProducts.length > 0) {
+            for (const rp of data.retailProducts) {
+              const product = await tx.retailProduct.findUnique({
+                where: { id: rp.retailProductId },
+              });
+
+              if (!product || !product.isActive) {
+                throw new AppError(`Retail product not found or inactive (${rp.retailProductId})`, HTTP_STATUS.NOT_FOUND);
+              }
+
+              if (product.quantity < rp.quantity) {
+                throw new AppError(
+                  `Insufficient stock for retail product "${product.name}" (requested: ${rp.quantity}, available: ${product.quantity})`,
+                  HTTP_STATUS.BAD_REQUEST
+                );
+              }
+
+              // Decrement RetailProduct stock
+              await tx.retailProduct.update({
+                where: { id: product.id },
+                data: {
+                  quantity: {
+                    decrement: rp.quantity,
+                  },
+                },
+              });
+
+              const itemTotal = Number(product.price) * rp.quantity;
+              subtotal += itemTotal;
+
+              retailItemsToCreate.push({
+                retailProductId: product.id,
+                itemType: InvoiceItemType.RETAIL_PRODUCT,
+                name: product.name,
+                productName: product.name,
+                price: product.price,
+                quantity: rp.quantity,
+              });
+            }
           }
 
-          if (product.quantity < rp.quantity) {
-            throw new AppError(
-              `Insufficient stock for retail product "${product.name}" (requested: ${rp.quantity}, available: ${product.quantity})`,
-              HTTP_STATUS.BAD_REQUEST
-            );
-          }
+          const discount = data.discount || 0;
+          const total = Math.max(0, subtotal - discount);
 
-          // Decrement RetailProduct stock
-          await tx.retailProduct.update({
-            where: { id: product.id },
+          const created = await tx.invoice.create({
             data: {
-              quantity: {
-                decrement: rp.quantity,
-              },
+              appointmentId: appointment.id,
+              clientId: appointment.clientId,
+              invoiceNumber,
+              date: dateObj,
+              status: invoiceStatus,
+              subtotal,
+              discount,
+              total,
             },
           });
 
-          const itemTotal = Number(product.price) * rp.quantity;
-          subtotal += itemTotal;
-
-          retailItemsToCreate.push({
-            retailProductId: product.id,
-            itemType: InvoiceItemType.RETAIL_PRODUCT,
-            name: product.name,
-            productName: product.name,
-            price: product.price,
-            quantity: rp.quantity,
+          // Ensure billed appointment services and appointment are marked COMPLETED
+          await tx.appointmentService.updateMany({
+            where: {
+              appointmentId: appointment.id,
+              status: { in: [AppointmentServiceStatus.BOOKED, AppointmentServiceStatus.IN_PROGRESS] },
+            },
+            data: {
+              status: AppointmentServiceStatus.COMPLETED,
+              completedAt: new Date(),
+            },
           });
+
+          await tx.appointment.update({
+            where: { id: appointment.id },
+            data: { status: AppointmentStatus.COMPLETED },
+          });
+
+          // Snapshot service items
+          for (const s of billableServices) {
+            await tx.invoiceItem.create({
+              data: {
+                invoiceId: created.id,
+                appointmentServiceId: s.id,
+                serviceId: s.serviceId,
+                technicianId: s.technicianId,
+                itemType: InvoiceItemType.SERVICE,
+                name: s.service?.name || 'Spa Service',
+                price: s.price,
+                quantity: 1,
+              },
+            });
+          }
+
+          // Snapshot retail product items
+          for (const rItem of retailItemsToCreate) {
+            await tx.invoiceItem.create({
+              data: {
+                invoiceId: created.id,
+                ...rItem,
+              },
+            });
+          }
+
+          // Log ClientHistory
+          const totalItems = billableServices.length + retailItemsToCreate.length;
+          await tx.clientHistory.create({
+            data: {
+              clientId: appointment.clientId,
+              action: 'INVOICE_CREATED',
+              details: `Invoice ${invoiceNumber} created (${totalItems} items). Total: ${total} FCFA`,
+              performedBy: authUser.id,
+            },
+          });
+
+          return created;
+        });
+
+        return this.getInvoiceById(invoice.id);
+      } catch (err: any) {
+        // Retry on Prisma unique constraint violation (P2002) for invoiceNumber
+        if (err?.code === 'P2002' && attempt < MAX_RETRIES - 1) {
+          lastError = err;
+          continue;
         }
+        throw err;
       }
+    }
 
-      const discount = data.discount || 0;
-      const total = Math.max(0, subtotal - discount);
-
-      const created = await tx.invoice.create({
-        data: {
-          appointmentId: appointment.id,
-          clientId: appointment.clientId,
-          invoiceNumber,
-          date: dateObj,
-          status: invoiceStatus,
-          subtotal,
-          discount,
-          total,
-        },
-      });
-
-      // Ensure billed appointment services and appointment are marked COMPLETED
-      await tx.appointmentService.updateMany({
-        where: {
-          appointmentId: appointment.id,
-          status: { in: [AppointmentServiceStatus.BOOKED, AppointmentServiceStatus.IN_PROGRESS] },
-        },
-        data: {
-          status: AppointmentServiceStatus.COMPLETED,
-          completedAt: new Date(),
-        },
-      });
-
-      await tx.appointment.update({
-        where: { id: appointment.id },
-        data: { status: AppointmentStatus.COMPLETED },
-      });
-
-      // Snapshot service items
-      for (const s of billableServices) {
-        await tx.invoiceItem.create({
-          data: {
-            invoiceId: created.id,
-            appointmentServiceId: s.id,
-            serviceId: s.serviceId,
-            technicianId: s.technicianId,
-            itemType: InvoiceItemType.SERVICE,
-            name: s.service?.name || 'Spa Service',
-            price: s.price,
-            quantity: 1,
-          },
-        });
-      }
-
-      // Snapshot retail product items
-      for (const rItem of retailItemsToCreate) {
-        await tx.invoiceItem.create({
-          data: {
-            invoiceId: created.id,
-            ...rItem,
-          },
-        });
-      }
-
-      // Log ClientHistory
-      const totalItems = billableServices.length + retailItemsToCreate.length;
-      await tx.clientHistory.create({
-        data: {
-          clientId: appointment.clientId,
-          action: 'INVOICE_CREATED',
-          details: `Invoice ${invoiceNumber} created (${totalItems} items). Total: ${total} FCFA`,
-          performedBy: authUser.id,
-        },
-      });
-
-      return created;
-    });
-
-    return this.getInvoiceById(invoice.id);
+    // All retries exhausted (should not happen in practice)
+    throw lastError || new AppError('Failed to generate unique invoice number', HTTP_STATUS.INTERNAL_SERVER_ERROR);
   }
 
   async addInvoiceItem(invoiceId: string, data: AddInvoiceItemInput, authUser: AuthContextUser) {

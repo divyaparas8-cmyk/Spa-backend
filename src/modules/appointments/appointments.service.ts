@@ -26,6 +26,8 @@ function minutesToTime(mins: number): string {
 export class AppointmentsService {
   /**
    * Check if a technician has a conflicting appointment on a given date/time.
+   * Queries BOTH mainTechnicianId AND per-service AppointmentService.technicianId
+   * to prevent double-booking across all assignment types.
    * Throws AppError if conflict found.
    */
   private async checkTechnicianConflict(
@@ -39,13 +41,17 @@ export class AppointmentsService {
     const newStartMins = timeToMinutes(startTime);
     const newEndMins = newStartMins + totalDurationMinutes;
 
-    // Find all non-cancelled appointments for this technician on this date
+    // Find all non-cancelled appointments where this technician is EITHER
+    // the main technician OR assigned to any individual service
     const existingAppointments = await prisma.appointment.findMany({
       where: {
         appointmentDate,
-        mainTechnicianId: technicianId,
         status: { notIn: [AppointmentStatus.NO_SHOW, AppointmentStatus.CANCELLED] },
         ...(excludeAppointmentId ? { id: { not: excludeAppointmentId } } : {}),
+        OR: [
+          { mainTechnicianId: technicianId },
+          { appointmentServices: { some: { technicianId: technicianId } } },
+        ],
       },
       include: {
         appointmentServices: {
@@ -125,18 +131,29 @@ export class AppointmentsService {
     // Map service prices
     const serviceMap = new Map(servicesInDb.map((s) => [s.id, s]));
 
-    // 4. Calculate total duration and check technician availability
+    // 4. Calculate total duration and check ALL technicians for conflicts
+    // Collect every unique technician ID involved (main + per-service overrides)
     const totalDuration = data.services.reduce((sum, item) => {
       const svc = serviceMap.get(item.serviceId);
       return sum + (svc?.duration || 30);
     }, 0);
 
-    await this.checkTechnicianConflict(
-      data.mainTechnicianId,
-      data.appointmentDate,
-      data.appointmentTime.trim(),
-      totalDuration
-    );
+    const allTechnicianIds = new Set<string>([data.mainTechnicianId]);
+    for (const item of data.services) {
+      if (item.technicianId) {
+        allTechnicianIds.add(item.technicianId);
+      }
+    }
+
+    // Check conflict for EVERY involved technician
+    for (const techId of allTechnicianIds) {
+      await this.checkTechnicianConflict(
+        techId,
+        data.appointmentDate,
+        data.appointmentTime.trim(),
+        totalDuration
+      );
+    }
 
     // Service summary
     const serviceNames = data.services
