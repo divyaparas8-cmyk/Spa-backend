@@ -9,19 +9,10 @@ export class AuthService {
   async login(input: LoginInput): Promise<LoginResponseData> {
     const inputClean = input.email.trim();
     const emailNormalized = inputClean.toLowerCase();
-    const phoneNoSpaces = inputClean.replace(/\s+/g, '');
-    const phoneDigits = inputClean.replace(/\D/g, '');
 
-    // Find user by email or staffProfile phone/username
-    const user = await prisma.user.findFirst({
-      where: {
-        OR: [
-          { email: emailNormalized },
-          { staffProfile: { phone: inputClean } },
-          { staffProfile: { phone: phoneNoSpaces } },
-          ...(phoneDigits ? [{ staffProfile: { phone: phoneDigits } }] : []),
-        ],
-      },
+    // Find user by email (Google OAuth / login identity)
+    const user = await prisma.user.findUnique({
+      where: { email: emailNormalized },
       include: {
         role: true,
         staffProfile: true,
@@ -54,6 +45,7 @@ export class AuthService {
       user: {
         id: user.id,
         email: user.email,
+        phone: user.phone || user.staffProfile?.phone || null,
         role: user.role.name,
         name: user.staffProfile?.name || user.role.name,
       },
@@ -80,12 +72,13 @@ export class AuthService {
     return {
       id: user.id,
       email: user.email,
+      phone: user.phone || user.staffProfile?.phone || null,
       role: user.role.name,
       staffProfile: user.staffProfile
         ? {
             id: user.staffProfile.id,
             name: user.staffProfile.name,
-            phone: user.staffProfile.phone,
+            phone: user.staffProfile.phone || user.phone,
             specialties: user.staffProfile.specialties,
           }
         : null,

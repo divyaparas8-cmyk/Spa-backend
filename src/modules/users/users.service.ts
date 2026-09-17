@@ -7,7 +7,9 @@ import { CreateUserInput, UpdateUserInput, UserResponse } from './users.types';
 export class UsersService {
   private formatUser(user: any): UserResponse {
     const roleName = user.role?.name || 'TECHNICIAN';
-    const username = user.staffProfile?.phone || user.email?.split('@')[0] || '';
+    const email = user.email || '';
+    const phone = user.phone || user.staffProfile?.phone || null;
+    const username = email.split('@')[0];
     let specialties: string[] = [];
     if (user.staffProfile?.specialties) {
       if (Array.isArray(user.staffProfile.specialties)) {
@@ -24,13 +26,13 @@ export class UsersService {
 
     return {
       id: user.id,
-      name: user.staffProfile?.name || user.email.split('@')[0],
-      email: user.email,
+      name: user.staffProfile?.name || email.split('@')[0],
+      email: email,
+      phone: phone,
       username: username,
       role: roleName.toLowerCase(),
       specialties: specialties,
       active: user.isActive,
-      phone: user.staffProfile?.phone || null,
       createdAt: user.createdAt,
       updatedAt: user.updatedAt,
     };
@@ -67,25 +69,37 @@ export class UsersService {
   }
 
   async createUser(input: CreateUserInput): Promise<UserResponse> {
-    const rawPhone = (input.phone || input.username || '').trim();
-    const phoneClean = rawPhone.replace(/\s+/g, '');
-    const usernameClean = (input.username || input.phone || input.name || '').trim().toLowerCase().replace(/\s+/g, '');
-    const emailNormalized = (input.email && input.email.trim())
-      ? input.email.trim().toLowerCase()
-      : `${usernameClean || 'user' + Date.now()}@gmail.com`;
+    const emailNormalized = (input.email || '').trim().toLowerCase();
+    if (!emailNormalized) {
+      throw new AppError('Email address is required', HTTP_STATUS.BAD_REQUEST);
+    }
 
-    // Check if user already exists with this phone or email
-    const existing = await prisma.user.findFirst({
-      where: {
-        OR: [
-          { email: emailNormalized },
-          ...(rawPhone ? [{ staffProfile: { phone: rawPhone } }] : []),
-          ...(phoneClean && phoneClean !== rawPhone ? [{ staffProfile: { phone: phoneClean } }] : []),
-        ],
-      },
+    const rawPhone = input.phone && input.phone.trim() ? input.phone.trim() : null;
+    const phoneClean = rawPhone ? rawPhone.replace(/\s+/g, '') : null;
+
+    // Check if user already exists with this email
+    const existingEmail = await prisma.user.findUnique({
+      where: { email: emailNormalized },
     });
-    if (existing) {
-      throw new AppError('A staff member with this mobile number or email already exists', HTTP_STATUS.CONFLICT);
+    if (existingEmail) {
+      throw new AppError('A user with this email address already exists', HTTP_STATUS.CONFLICT);
+    }
+
+    // Check if user already exists with this phone (if provided)
+    if (rawPhone) {
+      const existingPhone = await prisma.user.findFirst({
+        where: {
+          OR: [
+            { phone: rawPhone },
+            ...(phoneClean && phoneClean !== rawPhone ? [{ phone: phoneClean }] : []),
+            { staffProfile: { phone: rawPhone } },
+            ...(phoneClean && phoneClean !== rawPhone ? [{ staffProfile: { phone: phoneClean } }] : []),
+          ],
+        },
+      });
+      if (existingPhone) {
+        throw new AppError('A staff member with this phone number already exists', HTTP_STATUS.CONFLICT);
+      }
     }
 
     const roleUpper = input.role.toUpperCase() as any;
@@ -106,13 +120,14 @@ export class UsersService {
     const user = await prisma.user.create({
       data: {
         email: emailNormalized,
+        phone: rawPhone,
         passwordHash,
         roleId: roleRecord.id,
         isActive: true,
         staffProfile: {
           create: {
             name: input.name.trim(),
-            phone: rawPhone || null,
+            phone: rawPhone,
             specialties: specialtiesJson,
           },
         },
@@ -167,7 +182,7 @@ export class UsersService {
       if (emailNormalized !== existing.email) {
         const conflict = await prisma.user.findUnique({ where: { email: emailNormalized } });
         if (conflict) {
-          throw new AppError('Email already in use', HTTP_STATUS.CONFLICT);
+          throw new AppError('Email address already in use by another user', HTTP_STATUS.CONFLICT);
         }
         userUpdates.email = emailNormalized;
       }
@@ -178,10 +193,27 @@ export class UsersService {
     if (input.name !== undefined && input.name.trim()) {
       profileUpdates.name = input.name.trim();
     }
-    if (input.phone !== undefined || input.username !== undefined) {
-      const p = input.phone !== undefined ? input.phone : input.username;
-      profileUpdates.phone = p ? p.trim() : null;
+
+    if (input.phone !== undefined) {
+      const rawPhone = input.phone && input.phone.trim() ? input.phone.trim() : null;
+      if (rawPhone && rawPhone !== existing.phone) {
+        const phoneConflict = await prisma.user.findFirst({
+          where: {
+            id: { not: id },
+            OR: [
+              { phone: rawPhone },
+              { staffProfile: { phone: rawPhone } },
+            ],
+          },
+        });
+        if (phoneConflict) {
+          throw new AppError('Phone number already in use by another user', HTTP_STATUS.CONFLICT);
+        }
+      }
+      userUpdates.phone = rawPhone;
+      profileUpdates.phone = rawPhone;
     }
+
     if (input.specialties !== undefined) {
       const specs = Array.isArray(input.specialties) ? input.specialties : [];
       profileUpdates.specialties = specs.map((s: string) => (s === 'Massage' ? 'Body Massage' : s));
