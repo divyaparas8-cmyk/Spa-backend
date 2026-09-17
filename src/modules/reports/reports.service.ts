@@ -275,6 +275,7 @@ export class ReportsService {
       COMPLETED: 0,
       LATE: 0,
       NO_SHOW: 0,
+      CANCELLED: 0,
     };
 
     for (const a of appointments) {

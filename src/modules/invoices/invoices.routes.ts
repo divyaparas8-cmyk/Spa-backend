@@ -8,11 +8,15 @@ const router = Router();
 // All invoice routes require authentication
 router.use(authMiddleware);
 
-// RBAC: MANAGER & RECEPTION only. TECHNICIAN & CLEANER blocked.
-router.use(allowRoles('MANAGER', 'RECEPTION'));
+// POST /api/v1/invoices — Create invoice from completed appointment services (Manager, Reception, Technician)
+router.post(
+  '/',
+  allowRoles('MANAGER', 'RECEPTION', 'TECHNICIAN'),
+  (req, res, next) => invoicesController.createInvoice(req, res, next)
+);
 
-// POST /api/v1/invoices — Create invoice from completed appointment services (and optional retail products)
-router.post('/', (req, res, next) => invoicesController.createInvoice(req, res, next));
+// RBAC: MANAGER & RECEPTION only for remaining routes. TECHNICIAN & CLEANER blocked.
+router.use(allowRoles('MANAGER', 'RECEPTION'));
 
 // POST /api/v1/invoices/:id/items — Add items (retail products) to invoice
 router.post('/:id/items', (req, res, next) => invoicesController.addInvoiceItem(req, res, next));

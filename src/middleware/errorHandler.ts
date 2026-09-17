@@ -51,15 +51,20 @@ export const errorHandler = (
     message = (err as any).meta?.cause || 'Requested record was not found.';
   }
 
+  const isLocalDev =
+    process.env.NODE_ENV === 'development' &&
+    !process.env.RAILWAY_ENVIRONMENT &&
+    !process.env.RAILWAY_STATIC_URL;
+
   console.error(`[ERROR] ${statusCode} — ${message}`);
-  if (process.env.NODE_ENV === 'development') {
+  if (isLocalDev) {
     console.error(err.stack);
   }
 
   res.status(statusCode).json({
     success: false,
     message,
-    ...(process.env.NODE_ENV === 'development' && { stack: err.stack }),
+    ...(isLocalDev && { stack: err.stack }),
   });
 };
 

@@ -4,6 +4,7 @@ import helmet from 'helmet';
 import morgan from 'morgan';
 import { env } from './config/env';
 import { errorHandler, notFoundHandler } from './middleware/errorHandler';
+import { apiLimiter } from './middleware/rateLimiter';
 import authRoutes from './modules/auth/auth.routes';
 import clientsRoutes from './modules/clients/clients.routes';
 import appointmentsRoutes from './modules/appointments/appointments.routes';
@@ -111,6 +112,8 @@ app.get('/', (_req, res) => {
 // ==================================================
 // API Routes (Mounted strictly under /api/v1)
 // ==================================================
+// Apply general rate limiting to all API routes (100 req/min per IP)
+app.use('/api/v1', apiLimiter);
 app.use('/api/v1/auth', authRoutes);
 app.use('/api/v1/users', usersRoutes);
 app.use('/api/v1/specialties', specialtiesRoutes);

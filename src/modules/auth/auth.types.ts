@@ -6,6 +6,7 @@ export interface LoginInput {
 export interface AuthUserData {
   id: string;
   email: string;
+  phone?: string | null;
   role: string;
   name?: string;
 }
@@ -18,6 +19,7 @@ export interface LoginResponseData {
 export interface CurrentUserProfile {
   id: string;
   email: string;
+  phone?: string | null;
   role: string;
   staffProfile: {
     id: string;

@@ -7,10 +7,22 @@ export const createAppointmentServiceItemSchema = z.object({
   price: z.number().positive('Price must be positive').optional(),
 });
 
+export const appointmentTimeSchema = z
+  .string({ required_error: 'appointmentTime is required' })
+  .regex(/^([01]\d|2[0-3]):[0-5]\d$/, 'Invalid time format (HH:MM)')
+  .refine(
+    (t) => {
+      const [h, m] = t.split(':').map(Number);
+      const mins = (h || 0) * 60 + (m || 0);
+      return mins >= 10 * 60 && mins <= 21 * 60;
+    },
+    { message: 'Appointment time must be between 10:00 AM and 9:00 PM (10:00 – 21:00)' }
+  );
+
 export const createAppointmentSchema = z.object({
   clientId: z.string({ required_error: 'clientId is required' }).uuid('Invalid clientId UUID'),
   appointmentDate: z.string({ required_error: 'appointmentDate is required' }).min(1, 'appointmentDate is required'),
-  appointmentTime: z.string({ required_error: 'appointmentTime is required' }).min(1, 'appointmentTime is required'),
+  appointmentTime: appointmentTimeSchema,
   mainTechnicianId: z.string({ required_error: 'mainTechnicianId is required' }).uuid('Invalid mainTechnicianId UUID'),
   notes: z.string().optional().nullable(),
   services: z.array(createAppointmentServiceItemSchema).min(1, 'At least one service is required'),
@@ -18,14 +30,14 @@ export const createAppointmentSchema = z.object({
 
 export const updateAppointmentSchema = z.object({
   appointmentDate: z.string().optional(),
-  appointmentTime: z.string().optional(),
+  appointmentTime: appointmentTimeSchema.optional(),
   mainTechnicianId: z.string().uuid().optional(),
   notes: z.string().optional().nullable(),
   lateMinutes: z.number().int().nonnegative().optional().nullable(),
   noShowReason: z.string().optional().nullable(),
 });
 
-// Notice: CANCELLED is deliberately omitted per rule: "Do not add CANCELLED"
+// CANCELLED is handled via a dedicated PATCH /:id/cancel endpoint, not through generic status change
 export const changeAppointmentStatusSchema = z.object({
   status: z.enum([
     AppointmentStatus.SCHEDULED,

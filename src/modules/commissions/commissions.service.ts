@@ -17,6 +17,7 @@ export class CommissionsService {
    * - Idempotent: Prevents duplicate commission generation.
    * - Calculates based on the actual technician assigned to each service item.
    * - Supports service-wise commission percentages.
+   * - Also generates employee referral commissions if applicable.
    */
   async generateCommissionsForInvoice(invoiceId: string, txClient?: Prisma.TransactionClient) {
     const client = txClient || prisma;
@@ -117,6 +118,84 @@ export class CommissionsService {
         },
       });
     }
+
+    // Generate employee referral commission if the client was introduced by an employee
+    await this.generateEmployeeReferralCommission(invoiceId, client);
+  }
+
+  /**
+   * Generates EmployeeCommission for the employee who introduced the client.
+   * - Looks up client.introducedByEmployeeId from the invoice's client.
+   * - Applies REFERRAL commission rules from CommissionRule table.
+   * - Idempotent: Skips if EmployeeCommission already exists for this invoice.
+   * - The referring employee must NOT be a MANAGER (Managers cannot earn referral commissions).
+   */
+  private async generateEmployeeReferralCommission(invoiceId: string, client: Prisma.TransactionClient | typeof prisma) {
+    const invoice = await client.invoice.findUnique({
+      where: { id: invoiceId },
+      include: {
+        client: {
+          select: {
+            id: true,
+            introducedByEmployeeId: true,
+            source: true,
+          },
+        },
+      },
+    });
+
+    if (!invoice || !invoice.client) return;
+    if (!invoice.client.introducedByEmployeeId) return;
+    if (invoice.client.source !== 'STAFF_REFERRAL') return;
+
+    const employeeId = invoice.client.introducedByEmployeeId;
+
+    // Verify the referring employee exists, is active, and is NOT a Manager
+    const employee = await client.user.findUnique({
+      where: { id: employeeId },
+      include: { role: true },
+    });
+
+    if (!employee || !employee.isActive) return;
+    if (employee.role?.name === 'MANAGER') return;
+
+    // Idempotency: Check if EmployeeCommission already exists for this invoice + employee
+    const existingEmployeeComm = await client.employeeCommission.count({
+      where: { invoiceId, employeeId },
+    });
+
+    if (existingEmployeeComm > 0) return;
+
+    // Look up active REFERRAL commission rule
+    const referralRules = await client.commissionRule.findMany({
+      where: { type: CommissionType.REFERRAL, isActive: true },
+    });
+
+    if (referralRules.length === 0) return; // No referral rule configured — skip
+
+    const rule = referralRules[0]; // Use the first active referral rule
+    const invoiceTotal = Number(invoice.total);
+
+    // Calculate referral commission: percentage of invoice total, or fixed amount
+    let commissionAmount = 0;
+    if (rule.fixedAmount && Number(rule.fixedAmount) > 0) {
+      commissionAmount = Number(rule.fixedAmount);
+    } else {
+      commissionAmount = Math.round(((invoiceTotal * Number(rule.percentage)) / 100) * 100) / 100;
+    }
+
+    if (commissionAmount <= 0) return;
+
+    // Create EmployeeCommission record
+    await client.employeeCommission.create({
+      data: {
+        employeeId,
+        invoiceId,
+        commissionRuleId: rule.id,
+        amount: new Prisma.Decimal(commissionAmount),
+        status: CommissionStatus.PENDING,
+      },
+    });
   }
 
   /**

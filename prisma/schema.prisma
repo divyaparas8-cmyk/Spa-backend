@@ -54,6 +54,7 @@ enum AppointmentStatus {
   COMPLETED
   LATE
   NO_SHOW
+  CANCELLED
 }
 
 enum AppointmentServiceStatus {
@@ -177,6 +178,7 @@ model Role {
 model User {
   id                            String               @id @default(uuid())
   email                         String               @unique
+  phone                         String?              @unique
   passwordHash                  String
   roleId                        String
   role                          Role                 @relation(fields: [roleId], references: [id])

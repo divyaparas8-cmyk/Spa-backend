@@ -1,6 +1,7 @@
 export interface CreateUserInput {
   name: string;
-  email?: string;
+  email: string;
+  phone?: string | null;
   username?: string;
   role: string;
   password?: string;
@@ -9,8 +10,9 @@ export interface CreateUserInput {
 
 export interface UpdateUserInput {
   name?: string;
-  username?: string;
   email?: string;
+  phone?: string | null;
+  username?: string;
   role?: string;
   password?: string;
   specialties?: string[];
@@ -22,11 +24,11 @@ export interface UserResponse {
   id: string;
   name: string;
   email: string;
+  phone: string | null;
   username: string;
   role: string;
   specialties: string[];
   active: boolean;
-  phone?: string | null;
   createdAt: Date;
   updatedAt: Date;
 }

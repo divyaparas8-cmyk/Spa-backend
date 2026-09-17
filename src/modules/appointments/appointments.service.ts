@@ -10,8 +10,94 @@ import {
   AuthContextUser,
 } from './appointments.types';
 
+// Helper: convert "HH:MM" to total minutes from midnight
+function timeToMinutes(timeStr: string): number {
+  const [h, m] = timeStr.split(':').map(Number);
+  return (h || 0) * 60 + (m || 0);
+}
+
+// Helper: convert total minutes back to "HH:MM"
+function minutesToTime(mins: number): string {
+  const h = Math.floor(mins / 60);
+  const m = mins % 60;
+  return `${String(h).padStart(2, '0')}:${String(m).padStart(2, '0')}`;
+}
+
 export class AppointmentsService {
+  /**
+   * Check if a technician has a conflicting appointment on a given date/time.
+   * Queries BOTH mainTechnicianId AND per-service AppointmentService.technicianId
+   * to prevent double-booking across all assignment types.
+   * Throws AppError if conflict found.
+   */
+  private async checkTechnicianConflict(
+    technicianId: string,
+    dateStr: string,
+    startTime: string,
+    totalDurationMinutes: number,
+    excludeAppointmentId?: string
+  ): Promise<void> {
+    const cleanDate = dateStr.includes('T') ? dateStr.split('T')[0] : dateStr;
+    const startOfDay = new Date(`${cleanDate}T00:00:00.000Z`);
+    const endOfDay = new Date(`${cleanDate}T23:59:59.999Z`);
+    const newStartMins = timeToMinutes(startTime);
+    const newEndMins = newStartMins + totalDurationMinutes;
+
+    // Find all non-cancelled appointments where this technician is EITHER
+    // the main technician OR assigned to any individual service
+    const existingAppointments = await prisma.appointment.findMany({
+      where: {
+        appointmentDate: {
+          gte: startOfDay,
+          lte: endOfDay,
+        },
+        status: { notIn: [AppointmentStatus.NO_SHOW, AppointmentStatus.CANCELLED] },
+        ...(excludeAppointmentId ? { id: { not: excludeAppointmentId } } : {}),
+        OR: [
+          { mainTechnicianId: technicianId },
+          { appointmentServices: { some: { technicianId: technicianId } } },
+        ],
+      },
+      include: {
+        appointmentServices: {
+          include: {
+            service: { select: { duration: true } },
+          },
+        },
+      },
+    });
+
+    for (const existing of existingAppointments) {
+      const existingStartMins = timeToMinutes(existing.appointmentTime);
+      // Calculate total duration from appointment services
+      const existingTotalDuration = existing.appointmentServices.reduce(
+        (sum, as) => sum + (as.service?.duration || 30),
+        0
+      ) || 30; // Default 30 min if no services
+      const existingEndMins = existingStartMins + existingTotalDuration;
+
+      // Overlap check: newStart < existingEnd AND newEnd > existingStart
+      if (newStartMins < existingEndMins && newEndMins > existingStartMins) {
+        const existingStartStr = existing.appointmentTime;
+        const existingEndStr = minutesToTime(existingEndMins);
+        throw new AppError(
+          `Technician is not available during this time. Existing appointment: ${existingStartStr} – ${existingEndStr}. Please select another time or technician.`,
+          HTTP_STATUS.CONFLICT
+        );
+      }
+    }
+  }
+
   async createAppointment(data: CreateAppointmentInput, authUser: AuthContextUser) {
+    // 0. Validate Operating Hours: 10:00 AM to 9:00 PM (10:00 - 21:00)
+    const timeMins = timeToMinutes(data.appointmentTime);
+    if (timeMins < 10 * 60 || timeMins > 21 * 60) {
+      throw new AppError(
+        'Appointments can only be booked between 10:00 AM and 9:00 PM (10:00 – 21:00)',
+        HTTP_STATUS.BAD_REQUEST
+      );
+    }
+
     // 1. Validate Client exists
     const client = await prisma.client.findUnique({
       where: { id: data.clientId },
@@ -50,6 +136,30 @@ export class AppointmentsService {
     // Map service prices
     const serviceMap = new Map(servicesInDb.map((s) => [s.id, s]));
 
+    // 4. Calculate total duration and check ALL technicians for conflicts
+    // Collect every unique technician ID involved (main + per-service overrides)
+    const totalDuration = data.services.reduce((sum, item) => {
+      const svc = serviceMap.get(item.serviceId);
+      return sum + (svc?.duration || 30);
+    }, 0);
+
+    const allTechnicianIds = new Set<string>([data.mainTechnicianId]);
+    for (const item of data.services) {
+      if (item.technicianId) {
+        allTechnicianIds.add(item.technicianId);
+      }
+    }
+
+    // Check conflict for EVERY involved technician
+    for (const techId of allTechnicianIds) {
+      await this.checkTechnicianConflict(
+        techId,
+        data.appointmentDate,
+        data.appointmentTime.trim(),
+        totalDuration
+      );
+    }
+
     // Service summary
     const serviceNames = data.services
       .map((item) => serviceMap.get(item.serviceId)?.name)
@@ -57,9 +167,10 @@ export class AppointmentsService {
       .join(', ');
 
     // Parse appointmentDate
-    const appointmentDate = new Date(data.appointmentDate);
+    const cleanDate = data.appointmentDate.includes('T') ? data.appointmentDate.split('T')[0] : data.appointmentDate;
+    const appointmentDate = new Date(`${cleanDate}T00:00:00.000Z`);
 
-    // 4. Create Appointment + AppointmentService records in transaction
+    // 5. Create Appointment + AppointmentService records in transaction
     const appointment = await prisma.$transaction(async (tx) => {
       const appt = await tx.appointment.create({
         data: {
@@ -128,7 +239,7 @@ export class AppointmentsService {
     }
 
     if (query.date) {
-      where.appointmentDate = new Date(query.date);
+      where.appointmentDate = new Date(query.date + 'T12:00:00');
     }
 
     if (query.status) {
@@ -229,14 +340,33 @@ export class AppointmentsService {
   }
 
   async updateAppointment(id: string, data: UpdateAppointmentInput, authUser: AuthContextUser) {
-    const appointment = await prisma.appointment.findUnique({ where: { id } });
+    const appointment = await prisma.appointment.findUnique({
+      where: { id },
+      include: {
+        appointmentServices: {
+          include: { service: { select: { duration: true } } },
+        },
+      },
+    });
     if (!appointment) {
       throw new AppError('Appointment not found', HTTP_STATUS.NOT_FOUND);
     }
 
     const updateData: any = {};
-    if (data.appointmentDate) updateData.appointmentDate = new Date(data.appointmentDate);
-    if (data.appointmentTime) updateData.appointmentTime = data.appointmentTime.trim();
+    if (data.appointmentDate) {
+      const cleanDate = data.appointmentDate.includes('T') ? data.appointmentDate.split('T')[0] : data.appointmentDate;
+      updateData.appointmentDate = new Date(`${cleanDate}T00:00:00.000Z`);
+    }
+    if (data.appointmentTime) {
+      const timeMins = timeToMinutes(data.appointmentTime);
+      if (timeMins < 10 * 60 || timeMins > 21 * 60) {
+        throw new AppError(
+          'Appointments can only be booked between 10:00 AM and 9:00 PM (10:00 – 21:00)',
+          HTTP_STATUS.BAD_REQUEST
+        );
+      }
+      updateData.appointmentTime = data.appointmentTime.trim();
+    }
     if (data.notes !== undefined) updateData.notes = data.notes ? data.notes.trim() : null;
     if (data.lateMinutes !== undefined) updateData.lateMinutes = data.lateMinutes;
     if (data.noShowReason !== undefined) updateData.noShowReason = data.noShowReason;
@@ -250,6 +380,20 @@ export class AppointmentsService {
         throw new AppError('Assigned technician not found or inactive', HTTP_STATUS.BAD_REQUEST);
       }
       updateData.mainTechnicianId = data.mainTechnicianId;
+    }
+
+    // Check technician conflict if date, time, or technician changed
+    const hasScheduleChange = data.appointmentDate || data.appointmentTime || data.mainTechnicianId;
+    if (hasScheduleChange) {
+      const checkTechId = data.mainTechnicianId || appointment.mainTechnicianId;
+      const checkDate = data.appointmentDate || appointment.appointmentDate.toISOString().split('T')[0];
+      const checkTime = data.appointmentTime?.trim() || appointment.appointmentTime;
+      const totalDuration = appointment.appointmentServices.reduce(
+        (sum, as) => sum + (as.service?.duration || 30),
+        0
+      ) || 30;
+
+      await this.checkTechnicianConflict(checkTechId, checkDate, checkTime, totalDuration, id);
     }
 
     const updated = await prisma.appointment.update({
@@ -282,13 +426,7 @@ export class AppointmentsService {
     const currentStatus = appointment.status;
     const newStatus = data.status;
 
-    // TECHNICIAN STATUS RULES:
-    // Allowed:
-    // SCHEDULED -> IN_PROGRESS
-    // IN_PROGRESS -> COMPLETED
-    // Not allowed:
-    // SCHEDULED -> COMPLETED directly
-    // Setting LATE or NO_SHOW
+    // TECHNICIAN STATUS RULES
     if (authUser.role === 'TECHNICIAN') {
       const isAssigned =
         appointment.mainTechnicianId === authUser.id ||
@@ -358,6 +496,59 @@ export class AppointmentsService {
           clientId: appointment.clientId,
           action: 'STATUS_CHANGED',
           details: `Appointment status changed from ${currentStatus} to ${newStatus} by ${authUser.role}`,
+          performedBy: authUser.id,
+        },
+      });
+    });
+
+    return this.getAppointmentById(id, authUser);
+  }
+
+  async cancelAppointment(id: string, authUser: AuthContextUser) {
+    const appointment = await prisma.appointment.findUnique({
+      where: { id },
+      include: { appointmentServices: true },
+    });
+
+    if (!appointment) {
+      throw new AppError('Appointment not found', HTTP_STATUS.NOT_FOUND);
+    }
+
+    if (appointment.status === AppointmentStatus.CANCELLED) {
+      throw new AppError('Appointment is already cancelled', HTTP_STATUS.BAD_REQUEST);
+    }
+
+    if (appointment.status === AppointmentStatus.COMPLETED) {
+      throw new AppError('Cannot cancel a completed appointment', HTTP_STATUS.BAD_REQUEST);
+    }
+
+    await prisma.$transaction(async (tx) => {
+      // Update appointment status to CANCELLED
+      await tx.appointment.update({
+        where: { id },
+        data: {
+          status: AppointmentStatus.CANCELLED,
+          notes: appointment.notes
+            ? `${appointment.notes}\n[Cancelled by ${authUser.role} at ${new Date().toISOString()}]`
+            : `[Cancelled by ${authUser.role} at ${new Date().toISOString()}]`,
+        },
+      });
+
+      // Cancel all child appointment services
+      await tx.appointmentService.updateMany({
+        where: {
+          appointmentId: id,
+          status: { in: [AppointmentServiceStatus.BOOKED, AppointmentServiceStatus.IN_PROGRESS] },
+        },
+        data: { status: AppointmentServiceStatus.CANCELLED },
+      });
+
+      // Log ClientHistory
+      await tx.clientHistory.create({
+        data: {
+          clientId: appointment.clientId,
+          action: 'APPOINTMENT_CANCELLED',
+          details: `Appointment on ${appointment.appointmentDate.toISOString().split('T')[0]} at ${appointment.appointmentTime} cancelled by ${authUser.role}`,
           performedBy: authUser.id,
         },
       });

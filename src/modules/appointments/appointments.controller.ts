@@ -124,6 +124,19 @@ export class AppointmentsController {
       next(error);
     }
   }
+  async cancelAppointment(req: Request, res: Response, next: NextFunction): Promise<void> {
+    try {
+      const id = getParamId(req);
+      const cancelled = await appointmentsService.cancelAppointment(id, req.user!);
+
+      res.status(HTTP_STATUS.OK).json({
+        success: true,
+        data: cancelled,
+      });
+    } catch (error) {
+      next(error);
+    }
+  }
 }
 
 export const appointmentsController = new AppointmentsController();
