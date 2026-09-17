@@ -52,6 +52,14 @@ export class ServiceCompletionService {
       );
     }
 
+    // Idempotency: Prevent completing a service that is already completed
+    if (appointmentService.status === AppointmentServiceStatus.COMPLETED) {
+      throw new AppError(
+        'This service has already been completed and cannot be processed again',
+        HTTP_STATUS.CONFLICT
+      );
+    }
+
     // 3. Requirement: Technician can close ONLY their assigned AppointmentService
     if (authUser.role === 'TECHNICIAN' && appointmentService.technicianId !== authUser.id) {
       throw new AppError(
@@ -65,6 +73,17 @@ export class ServiceCompletionService {
 
     // 4. In a transaction: Consume stock, Update AppointmentService, save media, log history, and check auto-completion
     const result = await prisma.$transaction(async (tx) => {
+      // Concurrency guard: Re-fetch within transaction to prevent race conditions
+      const currentService = await tx.appointmentService.findUnique({
+        where: { id: appointmentServiceId },
+      });
+      if (!currentService || currentService.status === AppointmentServiceStatus.COMPLETED) {
+        throw new AppError(
+          'This service has already been completed and cannot be processed again',
+          HTTP_STATUS.CONFLICT
+        );
+      }
+
       // Consume required service stock:
       // - Decrements ServiceStock quantity
       // - Logs StockActivity with SERVICE_USAGE (referenceId = appointmentServiceId, createdById = technician.id)
