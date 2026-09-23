@@ -7,6 +7,7 @@ import { APP_NAME, APP_TIMEZONE } from './config/constants';
 import { logger } from './utils/logger';
 import { initMediaCleanupScheduler } from './modules/media/mediaCleanup.scheduler';
 import { initWhatsAppScheduler } from './modules/whatsapp/whatsapp.scheduler';
+import { initSocialMediaScheduler } from './modules/social/social.scheduler';
 
 const PORT = env.PORT;
 
@@ -31,6 +32,15 @@ app.listen(PORT, () => {
     initWhatsAppScheduler();
   } catch (err: any) {
     logger.error('Failed to initialize WhatsApp automation scheduler on startup:', {
+      error: err?.message || String(err),
+    });
+  }
+
+  // Automatically initialize Social Media scheduler (auto-publishes scheduled posts)
+  try {
+    initSocialMediaScheduler();
+  } catch (err: any) {
+    logger.error('Failed to initialize Social Media scheduler on startup:', {
       error: err?.message || String(err),
     });
   }

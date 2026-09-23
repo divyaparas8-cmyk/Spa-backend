@@ -15,6 +15,11 @@ interface EnvConfig {
   WHATSAPP_BUSINESS_ACCOUNT_ID: string;
   WHATSAPP_WEBHOOK_VERIFY_TOKEN: string;
   CORS_ORIGIN: string;
+  META_PAGE_ACCESS_TOKEN: string;
+  META_PAGE_ID: string;
+  INSTAGRAM_ACCOUNT_ID: string;
+  TIKTOK_ACCESS_TOKEN: string;
+  TIKTOK_BUSINESS_ID: string;
 }
 
 function getEnvVariable(key: string, required: boolean = true): string {
@@ -38,6 +43,11 @@ export const env: EnvConfig = {
   WHATSAPP_BUSINESS_ACCOUNT_ID: getEnvVariable('WHATSAPP_BUSINESS_ACCOUNT_ID', false),
   WHATSAPP_WEBHOOK_VERIFY_TOKEN: getEnvVariable('WHATSAPP_WEBHOOK_VERIFY_TOKEN', false),
   CORS_ORIGIN: getEnvVariable('CORS_ORIGIN', false),
+  META_PAGE_ACCESS_TOKEN: getEnvVariable('META_PAGE_ACCESS_TOKEN', false),
+  META_PAGE_ID: getEnvVariable('META_PAGE_ID', false),
+  INSTAGRAM_ACCOUNT_ID: getEnvVariable('INSTAGRAM_ACCOUNT_ID', false),
+  TIKTOK_ACCESS_TOKEN: getEnvVariable('TIKTOK_ACCESS_TOKEN', false),
+  TIKTOK_BUSINESS_ID: getEnvVariable('TIKTOK_BUSINESS_ID', false),
 };
 
 // Production readiness checks
