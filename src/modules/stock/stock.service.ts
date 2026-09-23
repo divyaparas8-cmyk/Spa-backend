@@ -10,6 +10,7 @@ import {
   StockActivityQueryFilter,
   CreateRetailProductInput,
   RefillRetailInput,
+  DeductRetailStockInput,
   AuthContextUser,
 } from './stock.types';
 
@@ -403,6 +404,33 @@ export class StockService {
       ...updated,
       price: Number(updated.price),
     };
+  }
+
+  async deductRetailStock(data: DeductRetailStockInput) {
+    return prisma.$transaction(async (tx) => {
+      const updatedProducts = [];
+      for (const item of data.items) {
+        const existing = await tx.retailProduct.findUnique({ where: { id: item.productId } });
+        if (!existing) continue;
+
+        const currentQty = existing.quantity;
+        const newQty = Math.max(0, currentQty - item.quantity);
+
+        const updated = await tx.retailProduct.update({
+          where: { id: item.productId },
+          data: {
+            quantity: newQty,
+          },
+        });
+
+        updatedProducts.push({
+          ...updated,
+          price: Number(updated.price),
+        });
+      }
+
+      return updatedProducts;
+    });
   }
 }
 

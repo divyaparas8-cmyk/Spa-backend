@@ -14,57 +14,71 @@ import {
 
 export class InvoicesService {
   async createInvoice(data: CreateInvoiceInput, authUser: AuthContextUser) {
-    // 1. Fetch appointment with client and appointmentServices
-    const appointment = await prisma.appointment.findUnique({
-      where: { id: data.appointmentId },
-      include: {
-        client: true,
-        appointmentServices: {
-          include: {
-            service: true,
-            technician: {
-              include: { staffProfile: true },
+    const isRetailOnly = !data.appointmentId;
+    let appointment: any = null;
+    let billableServices: any[] = [];
+    let subtotal = 0;
+
+    if (!isRetailOnly) {
+      // 1. Fetch appointment with client and appointmentServices
+      appointment = await prisma.appointment.findUnique({
+        where: { id: data.appointmentId! },
+        include: {
+          client: true,
+          appointmentServices: {
+            include: {
+              service: true,
+              technician: {
+                include: { staffProfile: true },
+              },
             },
           },
         },
-      },
-    });
+      });
 
-    if (!appointment) {
-      throw new AppError('Appointment not found', HTTP_STATUS.NOT_FOUND);
-    }
+      if (!appointment) {
+        throw new AppError('Appointment not found', HTTP_STATUS.NOT_FOUND);
+      }
 
-    // 2. Prevent duplicate invoice for same appointment
-    const existingInvoice = await prisma.invoice.findUnique({
-      where: { appointmentId: data.appointmentId },
-    });
+      // 2. Prevent duplicate invoice for same appointment
+      const existingInvoice = await prisma.invoice.findUnique({
+        where: { appointmentId: data.appointmentId! },
+      });
 
-    if (existingInvoice) {
-      throw new AppError('Invoice already exists for this appointment', HTTP_STATUS.CONFLICT);
-    }
+      if (existingInvoice) {
+        throw new AppError('Invoice already exists for this appointment', HTTP_STATUS.CONFLICT);
+      }
 
-    // 3. Create invoice from non-cancelled appointment services
-    let billableServices = appointment.appointmentServices.filter(
-      (s) => s.status === AppointmentServiceStatus.COMPLETED
-    );
-
-    if (billableServices.length === 0) {
+      // 3. Create invoice from non-cancelled appointment services
       billableServices = appointment.appointmentServices.filter(
-        (s) => s.status !== AppointmentServiceStatus.CANCELLED
+        (s: any) => s.status === AppointmentServiceStatus.COMPLETED
       );
+
+      if (billableServices.length === 0) {
+        billableServices = appointment.appointmentServices.filter(
+          (s: any) => s.status !== AppointmentServiceStatus.CANCELLED
+        );
+      }
+
+      if (billableServices.length === 0 && (!data.retailProducts || data.retailProducts.length === 0)) {
+        throw new AppError(
+          'Cannot create invoice: no billable appointment services found for this visit',
+          HTTP_STATUS.BAD_REQUEST
+        );
+      }
+
+      // Calculate subtotal from billable services
+      subtotal = billableServices.reduce((sum, s) => sum + Number(s.price), 0);
+    } else {
+      if (!data.retailProducts || data.retailProducts.length === 0) {
+        throw new AppError(
+          'Cannot create retail invoice: at least one retail product is required',
+          HTTP_STATUS.BAD_REQUEST
+        );
+      }
     }
 
-    if (billableServices.length === 0) {
-      throw new AppError(
-        'Cannot create invoice: no billable appointment services found for this visit',
-        HTTP_STATUS.BAD_REQUEST
-      );
-    }
-
-    // Calculate subtotal from billable services
-    let subtotal = billableServices.reduce((sum, s) => sum + Number(s.price), 0);
-
-    const invoiceStatus = data.status || InvoiceStatus.PENDING_PAYMENT;
+    const invoiceStatus = data.status || (isRetailOnly ? InvoiceStatus.PAID : InvoiceStatus.PENDING_PAYMENT);
 
     // 4. Atomic invoice creation with retry-based unique number generation.
     // Scopes count to today's date prefix and retries on P2002 (unique constraint collision).
@@ -86,6 +100,7 @@ export class InvoicesService {
 
         const invoice = await prisma.$transaction(async (tx) => {
           // Process retail products if requested
+          let retailSubtotal = 0;
           const retailItemsToCreate: any[] = [];
           if (data.retailProducts && data.retailProducts.length > 0) {
             for (const rp of data.retailProducts) {
@@ -115,7 +130,7 @@ export class InvoicesService {
               });
 
               const itemTotal = Number(product.price) * rp.quantity;
-              subtotal += itemTotal;
+              retailSubtotal += itemTotal;
 
               retailItemsToCreate.push({
                 retailProductId: product.id,
@@ -128,53 +143,58 @@ export class InvoicesService {
             }
           }
 
+          const combinedSubtotal = subtotal + retailSubtotal;
           const discount = data.discount || 0;
-          const total = Math.max(0, subtotal - discount);
+          const total = Math.max(0, combinedSubtotal - discount);
+
+          const targetClientId = appointment ? appointment.clientId : (data.clientId || null);
 
           const created = await tx.invoice.create({
             data: {
-              appointmentId: appointment.id,
-              clientId: appointment.clientId,
+              appointmentId: appointment ? appointment.id : null,
+              clientId: targetClientId,
               invoiceNumber,
               date: dateObj,
               status: invoiceStatus,
-              subtotal,
+              subtotal: combinedSubtotal,
               discount,
               total,
             },
           });
 
-          // Ensure billed appointment services and appointment are marked COMPLETED
-          await tx.appointmentService.updateMany({
-            where: {
-              appointmentId: appointment.id,
-              status: { in: [AppointmentServiceStatus.BOOKED, AppointmentServiceStatus.IN_PROGRESS] },
-            },
-            data: {
-              status: AppointmentServiceStatus.COMPLETED,
-              completedAt: new Date(),
-            },
-          });
-
-          await tx.appointment.update({
-            where: { id: appointment.id },
-            data: { status: AppointmentStatus.COMPLETED },
-          });
-
-          // Snapshot service items
-          for (const s of billableServices) {
-            await tx.invoiceItem.create({
+          if (appointment) {
+            // Ensure billed appointment services and appointment are marked COMPLETED
+            await tx.appointmentService.updateMany({
+              where: {
+                appointmentId: appointment.id,
+                status: { in: [AppointmentServiceStatus.BOOKED, AppointmentServiceStatus.IN_PROGRESS] },
+              },
               data: {
-                invoiceId: created.id,
-                appointmentServiceId: s.id,
-                serviceId: s.serviceId,
-                technicianId: s.technicianId,
-                itemType: InvoiceItemType.SERVICE,
-                name: s.service?.name || 'Spa Service',
-                price: s.price,
-                quantity: 1,
+                status: AppointmentServiceStatus.COMPLETED,
+                completedAt: new Date(),
               },
             });
+
+            await tx.appointment.update({
+              where: { id: appointment.id },
+              data: { status: AppointmentStatus.COMPLETED },
+            });
+
+            // Snapshot service items
+            for (const s of billableServices) {
+              await tx.invoiceItem.create({
+                data: {
+                  invoiceId: created.id,
+                  appointmentServiceId: s.id,
+                  serviceId: s.serviceId,
+                  technicianId: s.technicianId,
+                  itemType: InvoiceItemType.SERVICE,
+                  name: s.service?.name || 'Spa Service',
+                  price: s.price,
+                  quantity: 1,
+                },
+              });
+            }
           }
 
           // Snapshot retail product items
@@ -187,16 +207,32 @@ export class InvoicesService {
             });
           }
 
-          // Log ClientHistory
-          const totalItems = billableServices.length + retailItemsToCreate.length;
-          await tx.clientHistory.create({
-            data: {
-              clientId: appointment.clientId,
-              action: 'INVOICE_CREATED',
-              details: `Invoice ${invoiceNumber} created (${totalItems} items). Total: ${total} FCFA`,
-              performedBy: authUser.id,
-            },
-          });
+          // If status is PAID and paymentMethod is provided, create payment record
+          if (invoiceStatus === InvoiceStatus.PAID && data.paymentMethod) {
+            await tx.payment.create({
+              data: {
+                invoiceId: created.id,
+                amount: total,
+                paymentMethod: data.paymentMethod,
+                receivedById: authUser.id,
+                paidAt: dateObj,
+                notes: isRetailOnly ? 'Retail sale paid at reception' : 'Invoice payment recorded',
+              },
+            });
+          }
+
+          // Log ClientHistory if client linked
+          if (targetClientId) {
+            const totalItems = billableServices.length + retailItemsToCreate.length;
+            await tx.clientHistory.create({
+              data: {
+                clientId: targetClientId,
+                action: 'INVOICE_CREATED',
+                details: `Invoice ${invoiceNumber} created (${totalItems} items). Total: ${total} FCFA`,
+                performedBy: authUser.id,
+              },
+            });
+          }
 
           return created;
         });

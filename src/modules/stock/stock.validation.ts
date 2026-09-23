@@ -45,3 +45,12 @@ export const createRetailProductSchema = z.object({
 export const refillRetailSchema = z.object({
   quantity: z.number().int().positive('Quantity must be a positive integer'),
 });
+
+export const deductRetailStockSchema = z.object({
+  items: z.array(
+    z.object({
+      productId: z.string().uuid('Invalid productId UUID'),
+      quantity: z.number().int().positive('Quantity must be a positive integer'),
+    })
+  ).min(1, 'At least one item required'),
+});

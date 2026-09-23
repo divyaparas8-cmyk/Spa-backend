@@ -27,6 +27,11 @@ router.post('/retail/:id/refill', allowRoles('MANAGER'), (req, res, next) =>
   stockController.refillRetailProduct(req, res, next)
 );
 
+// POST /api/v1/stock/retail/deduct — Deduct retail product stock on sale
+router.post('/retail/deduct', allowRoles('MANAGER', 'RECEPTION'), (req, res, next) =>
+  stockController.deductRetailStock(req, res, next)
+);
+
 // GET /api/v1/stock — View service stock (Manager, Reception, Technician)
 router.get('/', allowRoles('MANAGER', 'RECEPTION', 'TECHNICIAN'), (req, res, next) =>
   stockController.getServiceStock(req, res, next)

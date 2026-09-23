@@ -8,6 +8,7 @@ import {
   stockActivityQuerySchema,
   createRetailProductSchema,
   refillRetailSchema,
+  deductRetailStockSchema,
 } from './stock.validation';
 import { HTTP_STATUS } from '../../config/constants';
 import { AuthContextUser } from './stock.types';
@@ -154,6 +155,20 @@ export class StockController {
       res.status(HTTP_STATUS.OK).json({
         success: true,
         message: 'Retail product stock refilled successfully',
+        data: result,
+      });
+    } catch (error) {
+      next(error);
+    }
+  }
+
+  async deductRetailStock(req: Request, res: Response, next: NextFunction) {
+    try {
+      const validated = deductRetailStockSchema.parse(req.body);
+      const result = await stockService.deductRetailStock(validated);
+      res.status(HTTP_STATUS.OK).json({
+        success: true,
+        message: 'Retail product stock deducted successfully',
         data: result,
       });
     } catch (error) {

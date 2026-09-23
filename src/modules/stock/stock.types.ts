@@ -45,6 +45,13 @@ export interface RefillRetailInput {
   quantity: number;
 }
 
+export interface DeductRetailStockInput {
+  items: {
+    productId: string;
+    quantity: number;
+  }[];
+}
+
 export interface AuthContextUser {
   id: string;
   role: string;

@@ -15,19 +15,26 @@ export const createInvoiceSchema = z.preprocess(
     }
     return val;
   },
-  z.object({
-    appointmentId: z.string({ required_error: 'appointmentId is required' }).uuid('Invalid appointmentId UUID'),
-    discount: z.number().nonnegative('Discount cannot be negative').optional().default(0),
-    status: z.enum([InvoiceStatus.DRAFT, InvoiceStatus.PENDING_PAYMENT]).optional().default(InvoiceStatus.PENDING_PAYMENT),
-    retailProducts: z
-      .array(
-        z.object({
-          retailProductId: z.string().uuid('Invalid retailProductId UUID'),
-          quantity: z.number().int().positive('Quantity must be a positive integer'),
-        })
-      )
-      .optional(),
-  })
+  z
+    .object({
+      appointmentId: z.string().uuid('Invalid appointmentId UUID').optional().nullable(),
+      clientId: z.string().uuid('Invalid clientId UUID').optional().nullable(),
+      clientName: z.string().optional().nullable(),
+      discount: z.number().nonnegative('Discount cannot be negative').optional().default(0),
+      status: z.enum([InvoiceStatus.DRAFT, InvoiceStatus.PENDING_PAYMENT, InvoiceStatus.PAID]).optional().default(InvoiceStatus.PENDING_PAYMENT),
+      paymentMethod: z.enum(['CASH', 'MTN_MOMO', 'ORANGE_MONEY']).optional(),
+      retailProducts: z
+        .array(
+          z.object({
+            retailProductId: z.string().uuid('Invalid retailProductId UUID'),
+            quantity: z.number().int().positive('Quantity must be a positive integer'),
+          })
+        )
+        .optional(),
+    })
+    .refine((data) => Boolean(data.appointmentId || (data.retailProducts && data.retailProducts.length > 0)), {
+      message: 'Either appointmentId or at least one retailProduct must be provided',
+    })
 );
 
 export const addInvoiceItemSchema = z.object({

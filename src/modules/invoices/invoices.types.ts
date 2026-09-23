@@ -1,9 +1,12 @@
-import { InvoiceStatus, InvoiceItemType } from '@prisma/client';
+import { InvoiceStatus, InvoiceItemType, PaymentMethod } from '@prisma/client';
 
 export interface CreateInvoiceInput {
-  appointmentId: string;
+  appointmentId?: string;
+  clientId?: string;
+  clientName?: string;
   discount?: number;
   status?: InvoiceStatus;
+  paymentMethod?: PaymentMethod;
   retailProducts?: {
     retailProductId: string;
     quantity: number;
