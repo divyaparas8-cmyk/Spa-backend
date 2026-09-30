@@ -270,6 +270,102 @@ export class WhatsAppProviderAdapter implements INotificationProvider, IWhatsApp
   }
 
   /**
+   * Send a PDF document directly via Meta WhatsApp Cloud API
+   * Uploads buffer to Meta Media endpoint, then delivers document message.
+   */
+  async sendDocument(params: {
+    recipientPhone: string;
+    buffer: Buffer;
+    filename: string;
+    caption?: string;
+  }): Promise<NotificationDeliveryResult> {
+    const recipientPhone = params.recipientPhone;
+
+    if (!recipientPhone || recipientPhone.trim().length === 0) {
+      return {
+        success: false,
+        status: 'FAILED',
+        failureReason: 'Recipient phone number is missing',
+      };
+    }
+
+    const normalizedPhone = this.normalizePhone(recipientPhone);
+
+    if (!this.isConfigured()) {
+      return {
+        success: true,
+        status: 'QUEUED',
+        providerMessageId: `queued-doc-${Date.now()}`,
+      };
+    }
+
+    try {
+      // 1. Upload media buffer to Meta Media API
+      const formData = new FormData();
+      const blob = new Blob([params.buffer], { type: 'application/pdf' });
+      formData.append('file', blob, params.filename);
+      formData.append('type', 'application/pdf');
+      formData.append('messaging_product', 'whatsapp');
+
+      const uploadRes = await fetch(`https://graph.facebook.com/v20.0/${this.phoneNumberId}/media`, {
+        method: 'POST',
+        headers: {
+          Authorization: `Bearer ${this.accessToken}`,
+        },
+        body: formData,
+      });
+
+      const uploadData = (await uploadRes.json()) as any;
+      if (!uploadRes.ok || !uploadData.id) {
+        throw new Error(`Media upload failed: ${JSON.stringify(uploadData)}`);
+      }
+
+      const mediaId = uploadData.id;
+
+      // 2. Dispatch document message via Meta Cloud API
+      const metaPayload = {
+        messaging_product: 'whatsapp',
+        recipient_type: 'individual',
+        to: normalizedPhone,
+        type: 'document',
+        document: {
+          id: mediaId,
+          filename: params.filename,
+          caption: params.caption || `Reçu OMEGA SPA — ${params.filename}`,
+        },
+      };
+
+      const sendRes = await fetch(this.apiBaseUrl, {
+        method: 'POST',
+        headers: {
+          'Content-Type': 'application/json',
+          Authorization: `Bearer ${this.accessToken}`,
+        },
+        body: JSON.stringify(metaPayload),
+      });
+
+      const sendData = (await sendRes.json()) as any;
+      if (!sendRes.ok) {
+        throw new Error(`Document dispatch failed: ${JSON.stringify(sendData)}`);
+      }
+
+      const messageId = sendData.messages?.[0]?.id || `meta-doc-${Date.now()}`;
+      return {
+        success: true,
+        status: 'SENT',
+        providerMessageId: messageId,
+      };
+    } catch (err: any) {
+      logger.error('[WhatsApp] Failed to send PDF document', { error: err.message });
+      return {
+        success: false,
+        status: 'FAILED',
+        failureReason: err.message,
+      };
+    }
+  }
+
+  /**
    * Normalize phone number for Meta API
    * Strips leading '+', spaces, dashes. Ensures numeric-only format.
    * Auto-prepends Cameroon country code (237) if a 9-digit local number (6xx/2xx) is entered.

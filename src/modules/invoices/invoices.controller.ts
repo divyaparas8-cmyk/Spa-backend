@@ -8,6 +8,7 @@ import {
 } from './invoices.validation';
 import { HTTP_STATUS } from '../../config/constants';
 import { AuthContextUser, CreateInvoiceInput } from './invoices.types';
+import { invoicePdfService } from './invoice-pdf.service';
 
 function getParamId(req: Request, key: string = 'id'): string {
   const val = req.params[key];
@@ -98,6 +99,20 @@ export class InvoicesController {
         message: 'Invoice updated successfully',
         data: invoice,
       });
+    } catch (error) {
+      next(error);
+    }
+  }
+
+  async getInvoicePdf(req: Request, res: Response, next: NextFunction) {
+    try {
+      const id = getParamId(req, 'id');
+      const { buffer, filename } = await invoicePdfService.generateInvoicePdf(id);
+
+      res.setHeader('Content-Type', 'application/pdf');
+      res.setHeader('Content-Disposition', `inline; filename="${filename}"`);
+      res.setHeader('Content-Length', buffer.length);
+      res.status(HTTP_STATUS.OK).send(buffer);
     } catch (error) {
       next(error);
     }

@@ -13,6 +13,7 @@ import {
 } from './whatsapp.types';
 import { whatsappAdapter } from './whatsapp.adapter';
 import { notificationEventBuilder } from '../notifications/notification-event.builder';
+import { invoicePdfService } from '../invoices/invoice-pdf.service';
 
 export function normalizeAutomationType(input: string): WhatsAppAutomationType {
   const up = (input || '').toUpperCase().replace(/-/g, '_');
@@ -432,6 +433,91 @@ export class WhatsAppService {
       clientId: event.clientId,
       invoiceId: event.invoiceId,
     });
+  }
+
+  /**
+   * Check if a receipt was already sent for this invoice
+   */
+  async getInvoiceReceiptStatus(invoiceId: string) {
+    const existingLog = await prisma.whatsAppMessageLog.findFirst({
+      where: {
+        invoiceId,
+        automationType: WhatsAppAutomationType.PAYMENT_CONFIRMATION,
+        status: 'SENT',
+      },
+      orderBy: { createdAt: 'desc' },
+    });
+
+    return {
+      alreadySent: Boolean(existingLog),
+      lastSentAt: existingLog?.sentAt || existingLog?.createdAt || null,
+      recipientPhone: existingLog?.recipientPhone || null,
+      messageId: existingLog?.id || null,
+    };
+  }
+
+  /**
+   * Send official Invoice PDF as an attached document via WhatsApp Cloud API
+   */
+  async sendInvoicePdf(invoiceId: string, recipientPhoneOverride?: string) {
+    const invoice = await prisma.invoice.findUnique({
+      where: { id: invoiceId },
+      include: {
+        client: true,
+      },
+    });
+
+    if (!invoice) throw new AppError('Invoice not found', HTTP_STATUS.NOT_FOUND);
+
+    const phone = recipientPhoneOverride || invoice.client?.phone || invoice.client?.whatsapp;
+    if (!phone) throw new AppError('Client has no phone number on file', HTTP_STATUS.BAD_REQUEST);
+
+    // 1. Generate PDF buffer
+    const { buffer, filename } = await invoicePdfService.generateInvoicePdf(invoiceId);
+
+    const caption = `🧾 *Reçu Officiel OMEGA SPA* — Facture ${invoice.invoiceNumber || invoice.id.slice(0, 8)}\nTotal: ${Number(invoice.total).toLocaleString()} FCFA\nMerci pour votre visite ! 🌿`;
+
+    // 2. Dispatch document via Meta API
+    const result = await whatsappAdapter.sendDocument({
+      recipientPhone: phone,
+      buffer,
+      filename,
+      caption,
+    });
+
+    // 3. Log dispatch
+    const now = new Date();
+    const log = await prisma.whatsAppMessageLog.create({
+      data: {
+        clientId: invoice.clientId,
+        invoiceId: invoice.id,
+        automationType: WhatsAppAutomationType.PAYMENT_CONFIRMATION,
+        recipientPhone: phone,
+        message: `[PDF Attachment] ${filename} - ${caption}`,
+        providerMessageId: result.providerMessageId || null,
+        status: result.status as any,
+        failureReason: result.failureReason || null,
+        idempotencyKey: `invoice-pdf:${invoice.id}:${Date.now()}`,
+        sentAt: result.status === 'SENT' ? now : null,
+      },
+    });
+
+    if (invoice.clientId) {
+      await prisma.clientHistory.create({
+        data: {
+          clientId: invoice.clientId,
+          action: 'WHATSAPP_MESSAGE_SENT',
+          details: `WhatsApp PDF Receipt dispatched (${filename}): ${result.status}`,
+        },
+      });
+    }
+
+    return {
+      success: result.success,
+      status: result.status,
+      log,
+      filename,
+    };
   }
 
   /**

@@ -140,6 +140,34 @@ export class WhatsAppController {
     }
   }
 
+  async sendInvoicePdf(req: Request, res: Response, next: NextFunction): Promise<void> {
+    try {
+      const { invoiceId, phone } = req.body;
+      if (!invoiceId) throw new AppError('invoiceId is required', HTTP_STATUS.BAD_REQUEST);
+      const result = await whatsappService.sendInvoicePdf(invoiceId, phone);
+      res.status(HTTP_STATUS.OK).json({
+        success: result.success,
+        message: result.success ? 'PDF Receipt delivered to WhatsApp' : 'Failed to deliver PDF Receipt',
+        data: result,
+      });
+    } catch (error) {
+      next(error);
+    }
+  }
+
+  async getInvoiceReceiptStatus(req: Request, res: Response, next: NextFunction): Promise<void> {
+    try {
+      const invoiceId = getParamId(req, 'id');
+      const result = await whatsappService.getInvoiceReceiptStatus(invoiceId);
+      res.status(HTTP_STATUS.OK).json({
+        success: true,
+        data: result,
+      });
+    } catch (error) {
+      next(error);
+    }
+  }
+
   async triggerCelebrations(_req: Request, res: Response, next: NextFunction): Promise<void> {
     try {
       const data = await whatsappService.processCelebrationReminders();

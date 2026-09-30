@@ -5,7 +5,10 @@ import { allowRoles } from '../../middleware/roleMiddleware';
 
 const router = Router();
 
-// All invoice routes require authentication
+// GET /api/v1/invoices/:id/pdf — Download or view generated official invoice PDF
+router.get('/:id/pdf', (req, res, next) => invoicesController.getInvoicePdf(req, res, next));
+
+// All subsequent invoice routes require authentication
 router.use(authMiddleware);
 
 // POST /api/v1/invoices — Create invoice from completed appointment services (Manager, Reception, Technician)
