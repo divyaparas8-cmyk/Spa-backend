@@ -272,9 +272,15 @@ export class WhatsAppProviderAdapter implements INotificationProvider, IWhatsApp
   /**
    * Normalize phone number for Meta API
    * Strips leading '+', spaces, dashes. Ensures numeric-only format.
+   * Auto-prepends Cameroon country code (237) if a 9-digit local number (6xx/2xx) is entered.
    */
   private normalizePhone(phone: string): string {
-    return phone.replace(/[\s\-\+\(\)]/g, '');
+    const cleaned = phone.replace(/[\s\-\+\(\)]/g, '');
+    // Cameroon local mobile/landline numbers are 9 digits (starting with 6 or 2)
+    if (cleaned.length === 9 && (cleaned.startsWith('6') || cleaned.startsWith('2'))) {
+      return `237${cleaned}`;
+    }
+    return cleaned;
   }
 }
 
