@@ -43,7 +43,7 @@ export class NotificationEventBuilder {
       recipient: {
         clientId: client.id,
         name: client.name,
-        phone: client.whatsapp || client.phone,
+        phone: client.phone || client.whatsapp,
       },
       placeholders: {
         clientName: client.name,
@@ -71,7 +71,7 @@ export class NotificationEventBuilder {
       recipient: {
         clientId: client.id,
         name: client.name,
-        phone: client.whatsapp || client.phone,
+        phone: client.phone || client.whatsapp,
       },
       placeholders: {
         clientName: client.name,
@@ -115,7 +115,7 @@ export class NotificationEventBuilder {
     const window2hMax = now + 2.5 * HOUR_MS;    // 2.5 hours from now
 
     for (const appt of appointments) {
-      const clientPhone = appt.client.whatsapp || appt.client.phone;
+      const clientPhone = appt.client.phone || appt.client.whatsapp;
       if (!clientPhone) continue;
 
       const techName = appt.mainTechnician?.staffProfile?.name || 'Your Specialist';
@@ -240,7 +240,7 @@ export class NotificationEventBuilder {
     const serviceName = appointment.serviceSummary || appointment.appointmentServices[0]?.service?.name || 'Spa Treatment';
     const techName = appointment.mainTechnician?.staffProfile?.name || 'Specialist';
     const loyaltyPoints = appointment.client.loyalty?.balance || 0;
-    const phone = appointment.client.whatsapp || appointment.client.phone;
+    const phone = appointment.client.phone || appointment.client.whatsapp;
     const idempotencyKey = `after-service:${appointment.id}`;
 
     return {
@@ -290,7 +290,7 @@ export class NotificationEventBuilder {
     const lastPayment = invoice.payments[0];
     const paymentMethod = lastPayment ? lastPayment.paymentMethod : 'CASH';
     const loyaltyPoints = invoice.client.loyalty?.balance || 0;
-    const phone = invoice.client.whatsapp || invoice.client.phone;
+    const phone = invoice.client.phone || invoice.client.whatsapp;
     const idempotencyKey = `payment-confirmation:${invoice.id}`;
 
     return {
@@ -336,7 +336,7 @@ export class NotificationEventBuilder {
     const lastVisit = client.lastVisitAt || (client.appointments[0] ? client.appointments[0].appointmentDate : null);
     const daysInactive = lastVisit ? Math.floor((now.getTime() - new Date(lastVisit).getTime()) / (1000 * 60 * 60 * 24)) : 30;
 
-    const phone = client.whatsapp || client.phone;
+    const phone = client.phone || client.whatsapp;
     const idempotencyKey = `rebooking:${client.id}:${businessDate}`;
 
     return {

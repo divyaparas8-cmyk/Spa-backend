@@ -305,8 +305,13 @@ export class ClientsService {
 
     const updateData: any = {};
     if (data.name !== undefined) updateData.name = data.name.trim();
-    if (data.phone !== undefined) updateData.phone = data.phone.trim();
-    if (data.whatsapp !== undefined) updateData.whatsapp = data.whatsapp ? data.whatsapp.trim() : null;
+    if (data.phone !== undefined) {
+      updateData.phone = data.phone.trim();
+      updateData.whatsapp = data.phone.trim();
+    }
+    if (data.whatsapp !== undefined && data.whatsapp) {
+      updateData.whatsapp = data.whatsapp.trim();
+    }
     if (data.quartier !== undefined) updateData.quartier = data.quartier ? data.quartier.trim() : null;
     if (data.birthday !== undefined) updateData.birthday = data.birthday ? new Date(data.birthday) : null;
     if (data.anniversary !== undefined) updateData.anniversary = data.anniversary ? new Date(data.anniversary) : null;
