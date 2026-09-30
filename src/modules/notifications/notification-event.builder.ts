@@ -43,7 +43,7 @@ export class NotificationEventBuilder {
       recipient: {
         clientId: client.id,
         name: client.name,
-        phone: client.phone || client.whatsapp,
+        phone: client.phone || client.whatsapp || undefined,
       },
       placeholders: {
         clientName: client.name,
@@ -71,7 +71,7 @@ export class NotificationEventBuilder {
       recipient: {
         clientId: client.id,
         name: client.name,
-        phone: client.phone || client.whatsapp,
+        phone: client.phone || client.whatsapp || undefined,
       },
       placeholders: {
         clientName: client.name,
@@ -251,7 +251,7 @@ export class NotificationEventBuilder {
       recipient: {
         clientId: appointment.client.id,
         name: appointment.client.name,
-        phone,
+        phone: phone || undefined,
       },
       placeholders: {
         clientName: appointment.client.name,
@@ -271,6 +271,7 @@ export class NotificationEventBuilder {
       include: {
         client: { include: { loyalty: true } },
         payments: { orderBy: { paidAt: 'desc' }, take: 1 },
+        items: true,
       },
     });
 
@@ -293,6 +294,10 @@ export class NotificationEventBuilder {
     const phone = invoice.client.phone || invoice.client.whatsapp;
     const idempotencyKey = `payment-confirmation:${invoice.id}`;
 
+    const itemsList = invoice.items && invoice.items.length > 0
+      ? invoice.items.map((it) => `• ${it.name} (${Number(it.price).toLocaleString()} FCFA)`).join('\n')
+      : '• Prestations & Soins';
+
     return {
       eventType: 'PAYMENT_CONFIRMATION',
       idempotencyKey,
@@ -301,7 +306,7 @@ export class NotificationEventBuilder {
       recipient: {
         clientId: invoice.client.id,
         name: invoice.client.name,
-        phone,
+        phone: phone || undefined,
       },
       placeholders: {
         clientName: invoice.client.name,
@@ -309,6 +314,7 @@ export class NotificationEventBuilder {
         invoiceNumber: invoice.invoiceNumber,
         paymentMethod,
         loyaltyPoints,
+        itemsList,
       },
     };
   }
@@ -346,7 +352,7 @@ export class NotificationEventBuilder {
       recipient: {
         clientId: client.id,
         name: client.name,
-        phone,
+        phone: phone || undefined,
       },
       placeholders: {
         clientName: client.name,

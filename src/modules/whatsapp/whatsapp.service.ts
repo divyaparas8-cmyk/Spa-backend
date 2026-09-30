@@ -53,7 +53,8 @@ export class WhatsAppService {
       timing: 'immediate',
     },
     PAYMENT_CONFIRMATION: {
-      template: 'Payment Confirmed! {clientName}, thank you for your payment of {amount} FCFA for Invoice {invoiceNumber} via {paymentMethod}. Your loyalty balance: {loyaltyPoints} points.',
+      template:
+        '🧾 *OMEGA SPA — Reçu / Receipt*\nFacture: {invoiceNumber}\nClient: {clientName}\n\n*Prestations / Services:*\n{itemsList}\n\n*Total Payé / Paid:* {amount} FCFA ({paymentMethod})\n*Points Fidélité / Loyalty:* {loyaltyPoints} pts\n\nMerci pour votre visite chez OMEGA SPA ! 🌿\nDouala, Cameroun · Tél: +237 6 87 67 32 62',
       timing: 'immediate',
     },
     REBOOKING: {
