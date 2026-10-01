@@ -132,6 +132,18 @@ export class ServiceCompletionService {
         },
       });
 
+      // Update Appointment.notes so observations are permanently attached to appointment record
+      if (input.notes && input.notes.trim()) {
+        const cleanNote = input.notes.trim();
+        const existingNotes = appointment.notes ? `${appointment.notes}\n` : '';
+        await tx.appointment.update({
+          where: { id: appointment.id },
+          data: {
+            notes: existingNotes ? `${existingNotes}${cleanNote}` : cleanNote,
+          },
+        });
+      }
+
       // 5. Automatic Appointment Completion:
       // When all AppointmentServices are completed, automatically update Appointment status = COMPLETED
       const allAppointmentServices = await tx.appointmentService.findMany({

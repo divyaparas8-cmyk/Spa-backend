@@ -360,6 +360,9 @@ export class InvoicesService {
           client: {
             select: { id: true, name: true, phone: true, quartier: true },
           },
+          appointment: {
+            select: { id: true, notes: true, appointmentDate: true, appointmentTime: true, serviceSummary: true },
+          },
           items: true,
           payments: true,
         },
@@ -371,6 +374,7 @@ export class InvoicesService {
       const remainingAmount = Math.max(0, Number(inv.total) - paidAmount);
       return {
         ...inv,
+        notes: inv.appointment?.notes || null,
         paidAmount,
         remainingAmount,
       };
@@ -399,7 +403,7 @@ export class InvoicesService {
           select: { id: true, name: true, phone: true, whatsapp: true, quartier: true },
         },
         appointment: {
-          select: { id: true, appointmentDate: true, appointmentTime: true, status: true, serviceSummary: true },
+          select: { id: true, notes: true, appointmentDate: true, appointmentTime: true, status: true, serviceSummary: true },
         },
         items: {
           include: {
@@ -431,6 +435,7 @@ export class InvoicesService {
 
     return {
       ...invoice,
+      notes: invoice.appointment?.notes || null,
       paidAmount,
       remainingAmount,
     };
