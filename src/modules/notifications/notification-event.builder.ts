@@ -225,6 +225,7 @@ export class NotificationEventBuilder {
         client: { include: { loyalty: true } },
         mainTechnician: { include: { staffProfile: true } },
         appointmentServices: { include: { service: true } },
+        feedbacks: true,
       },
     });
 
@@ -243,6 +244,23 @@ export class NotificationEventBuilder {
     const phone = appointment.client.phone || appointment.client.whatsapp;
     const idempotencyKey = `after-service:${appointment.id}`;
 
+    // Generate or get feedback token for this appointment
+    let feedbackToken = appointment.feedbacks?.[0]?.token;
+    if (!feedbackToken) {
+      feedbackToken = `fb-${Math.random().toString(36).slice(2, 10)}-${Date.now().toString(36)}`;
+      await prisma.clientFeedback.create({
+        data: {
+          clientId: appointment.client.id,
+          appointmentId: appointment.id,
+          token: feedbackToken,
+          rating: 0,
+        },
+      });
+    }
+
+    const frontendBaseUrl = process.env.FRONTEND_URL || 'https://omega-spa-pos.netlify.app';
+    const feedbackLink = `${frontendBaseUrl}/feedback?token=${feedbackToken}`;
+
     return {
       eventType: 'AFTER_SERVICE',
       idempotencyKey,
@@ -258,6 +276,7 @@ export class NotificationEventBuilder {
         service: serviceName,
         technician: techName,
         loyaltyPoints,
+        feedbackLink,
       },
     };
   }

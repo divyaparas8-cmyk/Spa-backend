@@ -278,6 +278,11 @@ export class WhatsAppProviderAdapter implements INotificationProvider, IWhatsApp
     buffer: Buffer;
     filename: string;
     caption?: string;
+    template?: {
+      name: string;
+      language?: string;
+      variables?: (string | number)[];
+    };
   }): Promise<NotificationDeliveryResult> {
     const recipientPhone = params.recipientPhone;
 
@@ -322,7 +327,65 @@ export class WhatsAppProviderAdapter implements INotificationProvider, IWhatsApp
 
       const mediaId = uploadData.id;
 
-      // 2. Dispatch document message via Meta Cloud API
+      // 2. If a template is configured (e.g. invoice_pdf_receipt), try Meta Approved Document Template first
+      if (params.template?.name) {
+        const templatePayload = {
+          messaging_product: 'whatsapp',
+          recipient_type: 'individual',
+          to: normalizedPhone,
+          type: 'template',
+          template: {
+            name: params.template.name,
+            language: { code: params.template.language || 'en' },
+            components: [
+              {
+                type: 'header',
+                parameters: [
+                  {
+                    type: 'document',
+                    document: {
+                      id: mediaId,
+                      filename: params.filename,
+                    },
+                  },
+                ],
+              },
+              ...(params.template.variables && params.template.variables.length > 0
+                ? [
+                    {
+                      type: 'body',
+                      parameters: params.template.variables.map((v) => ({
+                        type: 'text',
+                        text: String(v ?? ''),
+                      })),
+                    },
+                  ]
+                : []),
+            ],
+          },
+        };
+
+        const templateRes = await fetch(this.apiBaseUrl, {
+          method: 'POST',
+          headers: {
+            'Content-Type': 'application/json',
+            Authorization: `Bearer ${this.accessToken}`,
+          },
+          body: JSON.stringify(templatePayload),
+        });
+
+        const templateData = (await templateRes.json()) as any;
+        if (templateRes.ok && templateData.messages?.[0]?.id) {
+          return {
+            success: true,
+            status: 'SENT',
+            providerMessageId: templateData.messages[0].id,
+          };
+        }
+        logger.warn('[WhatsApp] Template document send failed, falling back to standard document:', templateData);
+      }
+
+      // 3. Fallback: Dispatch standard document message via Meta Cloud API
       const metaPayload = {
         messaging_product: 'whatsapp',
         recipient_type: 'individual',

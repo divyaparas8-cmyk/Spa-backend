@@ -50,7 +50,8 @@ export class WhatsAppService {
       timing: '2h',
     },
     AFTER_SERVICE: {
-      template: 'Thank you {clientName} for visiting OMEGA SPA! We hope you enjoyed your {service} with {technician}. Your current loyalty points balance: {loyaltyPoints} points.',
+      template:
+        'Thank you {clientName} for visiting OMEGA SPA! 🌿 We hope you enjoyed your {service} with {technician}. Your current loyalty points balance: {loyaltyPoints} points.\n\n⭐ We value your feedback! Rate your experience here:\n{feedbackLink}\n\n— OMEGA SPA, Douala',
       timing: 'immediate',
     },
     PAYMENT_CONFIRMATION: {
@@ -164,8 +165,22 @@ export class WhatsAppService {
     clientId?: string;
     appointmentId?: string;
     invoiceId?: string;
+    templateName?: string;
+    templateVariables?: (string | number)[];
+    templateLanguage?: string;
   }) {
-    const { recipientPhone, message, idempotencyKey, automationType, clientId, appointmentId, invoiceId } = params;
+    const {
+      recipientPhone,
+      message,
+      idempotencyKey,
+      automationType,
+      clientId,
+      appointmentId,
+      invoiceId,
+      templateName,
+      templateVariables,
+      templateLanguage,
+    } = params;
 
     // 1. Strict Idempotency Check: Verify if message already logged with this key
     const existingLog = await prisma.whatsAppMessageLog.findUnique({
@@ -202,13 +217,63 @@ export class WhatsAppService {
       }
     }
 
-    // 3. Dispatch via generic provider adapter interface
-    const sendResult = await whatsappAdapter.send({
+    // Build Meta template metadata if templateName is provided
+    let metadata: any = undefined;
+    if (templateName) {
+      const resolvedLanguage =
+        templateLanguage ||
+        ([
+          'appointment_reminder',
+          'payment_confirmation_',
+          'service_thank_you',
+          'birthday_greeting',
+          'anniversary_greeting',
+          'rebooking_reminder',
+        ].includes(templateName)
+          ? 'en'
+          : 'en_US');
+
+      metadata = {
+        template: {
+          name: templateName,
+          language: resolvedLanguage,
+          components:
+            templateVariables && templateVariables.length > 0
+              ? [
+                  {
+                    type: 'body',
+                    parameters: templateVariables.map((v) => ({
+                      type: 'text',
+                      text: String(v ?? ''),
+                    })),
+                  },
+                ]
+              : undefined,
+        },
+      };
+    }
+
+    // 3. Dispatch via generic provider adapter interface (tries Meta template first)
+    let sendResult = await whatsappAdapter.send({
       channel: 'WHATSAPP',
       recipient: { phone: recipientPhone, clientId },
       content: message,
       idempotencyKey,
+      metadata,
     });
+
+    // Fallback: if template dispatch fails (e.g. template pending), fallback to plain text
+    if (!sendResult.success && metadata) {
+      const fallbackResult = await whatsappAdapter.send({
+        channel: 'WHATSAPP',
+        recipient: { phone: recipientPhone, clientId },
+        content: message,
+        idempotencyKey: `${idempotencyKey}:txt-fallback`,
+      });
+      if (fallbackResult.success) {
+        sendResult = fallbackResult;
+      }
+    }
 
     // 4. Record in WhatsAppMessageLog
     const now = new Date();
@@ -259,6 +324,12 @@ export class WhatsAppService {
       idempotencyKey: event.idempotencyKey,
       automationType: WhatsAppAutomationType.BIRTHDAY,
       clientId: event.clientId,
+      templateName: 'birthday_greeting',
+      templateLanguage: 'en',
+      templateVariables: [
+        String(event.placeholders.clientName || 'Valued Guest'),
+        String(event.placeholders.rewardPoints || '500'),
+      ],
     });
   }
 
@@ -276,6 +347,11 @@ export class WhatsAppService {
       idempotencyKey: event.idempotencyKey,
       automationType: WhatsAppAutomationType.ANNIVERSARY,
       clientId: event.clientId,
+      templateName: 'anniversary_greeting',
+      templateLanguage: 'en',
+      templateVariables: [
+        String(event.placeholders.clientName || 'Valued Guest'),
+      ],
     });
   }
 
@@ -356,6 +432,14 @@ export class WhatsAppService {
           automationType: WhatsAppAutomationType.APPOINTMENT_24H,
           clientId: item.clientId,
           appointmentId: item.appointmentId,
+          templateName: 'appointment_reminder',
+          templateLanguage: 'en',
+          templateVariables: [
+            String(item.placeholders.clientName || 'Valued Guest'),
+            String(item.placeholders.appointmentTime || '14:00'),
+            String(item.placeholders.service || 'Spa Treatment'),
+            String(item.placeholders.technician || 'Specialist'),
+          ],
         });
 
         if (res24h.log.status !== 'SKIPPED') {
@@ -378,6 +462,14 @@ export class WhatsAppService {
           automationType: WhatsAppAutomationType.APPOINTMENT_2H,
           clientId: item.clientId,
           appointmentId: item.appointmentId,
+          templateName: 'appointment_reminder_2h',
+          templateLanguage: 'en',
+          templateVariables: [
+            String(item.placeholders.clientName || 'Valued Guest'),
+            String(item.placeholders.appointmentTime || '14:00'),
+            String(item.placeholders.service || 'Spa Treatment'),
+            String(item.placeholders.technician || 'Specialist'),
+          ],
         });
 
         if (res2h.log.status !== 'SKIPPED') {
@@ -414,6 +506,15 @@ export class WhatsAppService {
       automationType: WhatsAppAutomationType.AFTER_SERVICE,
       clientId: event.clientId,
       appointmentId: event.appointmentId,
+      templateName: 'service_feedback_request',
+      templateLanguage: 'en',
+      templateVariables: [
+        String(event.placeholders.clientName || 'Valued Guest'),
+        String(event.placeholders.service || 'Spa Treatment'),
+        String(event.placeholders.technician || 'Specialist'),
+        String(event.placeholders.loyaltyPoints || '0'),
+        String(event.placeholders.feedbackLink || 'https://omega-spa-pos.netlify.app'),
+      ],
     });
   }
 
@@ -432,6 +533,15 @@ export class WhatsAppService {
       automationType: WhatsAppAutomationType.PAYMENT_CONFIRMATION,
       clientId: event.clientId,
       invoiceId: event.invoiceId,
+      templateName: 'payment_confirmation_',
+      templateLanguage: 'en',
+      templateVariables: [
+        String(event.placeholders.clientName || 'Valued Guest'),
+        Number(event.placeholders.amount || 0).toLocaleString(),
+        String(event.placeholders.invoiceNumber || 'INV-0001'),
+        String(event.placeholders.paymentMethod || 'Cash'),
+        String(event.placeholders.loyaltyPoints || '0'),
+      ],
     });
   }
 
@@ -463,7 +573,13 @@ export class WhatsAppService {
     const invoice = await prisma.invoice.findUnique({
       where: { id: invoiceId },
       include: {
-        client: true,
+        client: {
+          include: { loyalty: true },
+        },
+        payments: {
+          orderBy: { paidAt: 'desc' },
+          take: 1,
+        },
       },
     });
 
@@ -475,14 +591,34 @@ export class WhatsAppService {
     // 1. Generate PDF buffer
     const { buffer, filename } = await invoicePdfService.generateInvoicePdf(invoiceId);
 
-    const caption = `🧾 *Reçu Officiel OMEGA SPA* — Facture ${invoice.invoiceNumber || invoice.id.slice(0, 8)}\nTotal: ${Number(invoice.total).toLocaleString()} FCFA\nMerci pour votre visite ! 🌿`;
+    // Look up feedback token if available
+    let feedbackToken: string | null = null;
+    if (invoice.appointmentId) {
+      const fb = await prisma.clientFeedback.findFirst({ where: { appointmentId: invoice.appointmentId } });
+      feedbackToken = fb?.token || null;
+    }
+    const frontendBaseUrl = process.env.FRONTEND_URL || 'https://omega-spa-pos.netlify.app';
+    const feedbackText = feedbackToken ? `\n\n⭐ Votre avis compte pour nous / Rate your experience:\n${frontendBaseUrl}/feedback?token=${feedbackToken}` : '';
 
-    // 2. Dispatch document via Meta API
+    const caption = `🧾 *Reçu Officiel OMEGA SPA* — Facture ${invoice.invoiceNumber || invoice.id.slice(0, 8)}\nTotal: ${Number(invoice.total).toLocaleString()} FCFA${feedbackText}\n\nMerci pour votre visite ! 🌿`;
+
+    // 2. Dispatch document via Meta API (tries invoice_pdf_receipt template first)
     const result = await whatsappAdapter.sendDocument({
       recipientPhone: phone,
       buffer,
       filename,
       caption,
+      template: {
+        name: 'invoice_pdf_receipt',
+        language: 'en',
+        variables: [
+          invoice.client?.name || 'Valued Guest',
+          Number(invoice.total || 0).toLocaleString(),
+          invoice.invoiceNumber || invoice.id.slice(0, 8),
+          invoice.payments?.[0]?.paymentMethod || 'Cash',
+          invoice.client?.loyalty?.balance || 0,
+        ],
+      },
     });
 
     // 3. Log dispatch
@@ -534,6 +670,13 @@ export class WhatsAppService {
       idempotencyKey: event.idempotencyKey,
       automationType: WhatsAppAutomationType.REBOOKING,
       clientId: event.clientId,
+      templateName: 'rebooking_reminder',
+      templateLanguage: 'en',
+      templateVariables: [
+        String(event.placeholders.clientName || 'Valued Guest'),
+        String(event.placeholders.daysInactive || '30'),
+        String(event.placeholders.discount || '10'),
+      ],
     });
   }
 
@@ -601,6 +744,16 @@ export class WhatsAppService {
       message,
       idempotencyKey: event.idempotencyKey,
       automationType: WhatsAppAutomationType.DAILY_CLOSE_BOSS,
+      templateName: 'daily_close_summary',
+      templateLanguage: 'en',
+      templateVariables: [
+        String(event.placeholders.todayDate || businessDate),
+        Number(event.placeholders.totalRevenue || 0).toLocaleString(),
+        String(event.placeholders.clientsServed || '0'),
+        Number(event.placeholders.cashAmount || 0).toLocaleString(),
+        Number(event.placeholders.momoAmount || 0).toLocaleString(),
+        Number(event.placeholders.orangeAmount || 0).toLocaleString(),
+      ],
     });
   }
 

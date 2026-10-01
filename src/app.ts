@@ -24,6 +24,7 @@ import uploadsRoutes from './modules/uploads/uploads.routes';
 import mediaRoutes from './modules/media/media.routes';
 import attendanceRoutes from './modules/attendance/attendance.routes';
 import socialRoutes from './modules/social/social.routes';
+import { publicFeedbackRouter, clientFeedbackRouter, feedbackRouter } from './modules/feedback/feedback.routes';
 import path from 'path';
 
 const app = express();
@@ -135,6 +136,9 @@ app.use('/api/v1/uploads', uploadsRoutes);
 app.use('/api/v1/media', mediaRoutes);
 app.use('/api/v1/attendance', attendanceRoutes);
 app.use('/api/v1/social', socialRoutes);
+app.use('/api/v1/public/feedback', publicFeedbackRouter);
+app.use('/api/v1/client-feedback', clientFeedbackRouter);
+app.use('/api/v1/feedback', feedbackRouter);
 
 // ==================================================
 // Error Handling Middleware
