@@ -1,4 +1,5 @@
 export interface CreateFeedbackTokenDto {
+  token?: string;
   clientId?: string;
   appointmentId?: string;
   clientName?: string;
