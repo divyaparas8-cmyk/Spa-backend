@@ -8,14 +8,32 @@ export class FeedbackService {
    * Generates or retrieves a feedback token for an appointment or client
    */
   async generateFeedbackToken(data: CreateFeedbackTokenDto) {
-    const { clientId, appointmentId } = data;
+    let { clientId, appointmentId, token } = data;
+
+    // Resolve clientId from appointment if not explicitly passed
+    if (!clientId && appointmentId) {
+      const apt = await prisma.appointment.findUnique({
+        where: { id: appointmentId },
+        select: { clientId: true },
+      });
+      if (apt?.clientId) {
+        clientId = apt.clientId;
+      }
+    }
 
     // Check if token already exists for this appointment
     if (appointmentId) {
       const existing = await prisma.clientFeedback.findFirst({
         where: { appointmentId },
+        include: { client: true },
       });
       if (existing && existing.token) {
+        if (!existing.clientId && clientId) {
+          await prisma.clientFeedback.update({
+            where: { id: existing.id },
+            data: { clientId },
+          });
+        }
         const frontendBase = process.env.FRONTEND_URL || 'https://omega-spa-pos.netlify.app';
         return {
           token: existing.token,
@@ -25,21 +43,22 @@ export class FeedbackService {
       }
     }
 
-    const token = `fb-${Math.random().toString(36).slice(2, 10)}-${Date.now().toString(36)}`;
+    const generatedToken = token || `fb-${Math.random().toString(36).slice(2, 10)}-${Date.now().toString(36)}`;
     const created = await prisma.clientFeedback.create({
       data: {
         clientId: clientId || null,
         appointmentId: appointmentId || null,
-        token,
+        token: generatedToken,
         rating: 0,
         isSubmitted: false,
       },
+      include: { client: true },
     });
 
     const frontendBase = process.env.FRONTEND_URL || 'https://omega-spa-pos.netlify.app';
     return {
-      token,
-      feedbackUrl: `${frontendBase}/feedback?token=${token}`,
+      token: generatedToken,
+      feedbackUrl: `${frontendBase}/feedback?token=${generatedToken}`,
       feedback: created,
     };
   }
@@ -58,6 +77,7 @@ export class FeedbackService {
         client: true,
         appointment: {
           include: {
+            client: true,
             appointmentServices: { include: { service: true } },
             mainTechnician: { include: { staffProfile: true } },
           },
@@ -69,7 +89,7 @@ export class FeedbackService {
       throw new AppError('Feedback link is invalid or expired', HTTP_STATUS.NOT_FOUND);
     }
 
-    const clientName = feedback.client?.name || 'Valued Guest';
+    const clientName = feedback.client?.name || feedback.appointment?.client?.name || 'Valued Guest';
     const serviceName =
       feedback.appointment?.serviceSummary ||
       feedback.appointment?.appointmentServices?.[0]?.service?.name ||
@@ -186,6 +206,7 @@ export class FeedbackService {
               id: true,
               appointmentDate: true,
               serviceSummary: true,
+              client: { select: { id: true, name: true, phone: true } },
               mainTechnician: {
                 select: {
                   staffProfile: { select: { name: true } },
@@ -199,7 +220,7 @@ export class FeedbackService {
     ]);
 
     const formatted = feedbacks.map((fb) => {
-      const clientName = fb.client?.name || 'Valued Guest';
+      const clientName = fb.client?.name || fb.appointment?.client?.name || 'Valued Guest';
       const serviceName =
         fb.appointment?.serviceSummary || 'Spa Service';
       const techName =
