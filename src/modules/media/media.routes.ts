@@ -68,7 +68,7 @@ router.post(
 // Get persistent cleaning records (role-secured: cleaners see own, managers see all)
 router.get(
   '/cleaning',
-  allowRoles('MANAGER', 'CLEANER'),
+  allowRoles('MANAGER', 'RECEPTION', 'CLEANER'),
   (req, res, next) => mediaController.getCleaningRecords(req, res, next)
 );
 
