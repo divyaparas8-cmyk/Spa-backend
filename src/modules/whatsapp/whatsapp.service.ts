@@ -489,10 +489,12 @@ export class WhatsAppService {
     const setting = await this.getAutomationByType(WhatsAppAutomationType.AFTER_SERVICE);
     const message = this.compileTemplate(setting.template, event.placeholders);
 
+    const idempotencyKey = `after-service:${appointmentId}:${Date.now()}`;
+
     return this.dispatchMessage({
       recipientPhone: event.recipient.phone || '',
       message,
-      idempotencyKey: event.idempotencyKey,
+      idempotencyKey,
       automationType: WhatsAppAutomationType.AFTER_SERVICE,
       clientId: event.clientId,
       appointmentId: event.appointmentId,
