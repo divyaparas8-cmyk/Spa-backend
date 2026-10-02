@@ -9,6 +9,8 @@ import {
   AppointmentQueryFilter,
   AuthContextUser,
 } from './appointments.types';
+import { whatsappService } from '../whatsapp/whatsapp.service';
+import { logger } from '../../utils/logger';
 
 // Helper: convert "HH:MM" to total minutes from midnight
 function timeToMinutes(timeStr: string): number {
@@ -242,6 +244,15 @@ export class AppointmentsService {
       });
 
       return appt;
+    });
+
+    // 6. Send instant WhatsApp appointment confirmation via Meta-approved template
+    // Fire-and-forget: don't block the response if WhatsApp dispatch fails
+    whatsappService.triggerAppointmentConfirmation(appointment.id).catch((err) => {
+      logger.error('[Appointments] WhatsApp appointment confirmation failed (non-blocking)', {
+        appointmentId: appointment.id,
+        error: err?.message || String(err),
+      });
     });
 
     return this.getAppointmentById(appointment.id, authUser);

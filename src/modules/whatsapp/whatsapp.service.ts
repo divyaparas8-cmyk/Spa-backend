@@ -253,27 +253,17 @@ export class WhatsAppService {
       };
     }
 
-    // 3. Dispatch via generic provider adapter interface (tries Meta template first)
-    let sendResult = await whatsappAdapter.send({
+    // 3. Dispatch via generic provider adapter interface (template message only)
+    // NOTE: Plain text fallback removed — it only works within 24h conversation windows,
+    // causing inconsistent delivery (works for clients who messaged first, fails for others).
+    // All automated messages must use Meta-approved templates for reliable delivery.
+    const sendResult = await whatsappAdapter.send({
       channel: 'WHATSAPP',
       recipient: { phone: recipientPhone, clientId },
       content: message,
       idempotencyKey,
       metadata,
     });
-
-    // Fallback: if template dispatch fails (e.g. template pending), fallback to plain text
-    if (!sendResult.success && metadata) {
-      const fallbackResult = await whatsappAdapter.send({
-        channel: 'WHATSAPP',
-        recipient: { phone: recipientPhone, clientId },
-        content: message,
-        idempotencyKey: `${idempotencyKey}:txt-fallback`,
-      });
-      if (fallbackResult.success) {
-        sendResult = fallbackResult;
-      }
-    }
 
     // 4. Record in WhatsAppMessageLog
     const now = new Date();
@@ -758,7 +748,65 @@ export class WhatsAppService {
   }
 
   /**
-   * 8. Custom / Direct templated dispatch
+   * 8. Instant Appointment Confirmation — triggered immediately when appointment is created.
+   * Uses the Meta-approved 'appointment_reminder' template to send confirmation.
+   */
+  async triggerAppointmentConfirmation(appointmentId: string) {
+    const appointment = await prisma.appointment.findUnique({
+      where: { id: appointmentId },
+      include: {
+        client: true,
+        mainTechnician: true,
+        appointmentServices: {
+          include: { service: { select: { name: true } } },
+        },
+      },
+    });
+
+    if (!appointment || !appointment.client) {
+      return { alreadySent: false, log: null, error: 'Appointment or client not found' };
+    }
+
+    const client = appointment.client;
+    const phone = client.phone || client.whatsapp;
+    if (!phone) {
+      return { alreadySent: false, log: null, error: 'Client has no phone number' };
+    }
+
+    // Build service names
+    const serviceNames = appointment.appointmentServices
+      .map((as) => as.service?.name)
+      .filter(Boolean)
+      .join(', ') || appointment.serviceSummary || 'Spa Treatment';
+
+    const technicianName = appointment.mainTechnician?.name || 'Specialist';
+    const appointmentDate = appointment.appointmentDate
+      ? new Date(appointment.appointmentDate).toLocaleDateString('en-GB', { day: '2-digit', month: 'short', year: 'numeric' })
+      : 'TBD';
+    const appointmentTime = appointment.appointmentTime || '14:00';
+
+    const idempotencyKey = `appt-confirm:${appointmentId}:${Date.now()}`;
+
+    return this.dispatchMessage({
+      recipientPhone: phone,
+      message: `Hello ${client.name}, your appointment at OMEGA SPA is confirmed for ${appointmentDate} at ${appointmentTime} for ${serviceNames} with ${technicianName}. See you soon!`,
+      idempotencyKey,
+      automationType: WhatsAppAutomationType.APPOINTMENT_REMINDER,
+      clientId: client.id,
+      appointmentId: appointment.id,
+      templateName: 'appointment_reminder',
+      templateLanguage: 'en',
+      templateVariables: [
+        client.name || 'Valued Guest',
+        appointmentTime,
+        serviceNames,
+        technicianName,
+      ],
+    });
+  }
+
+  /**
+   * 9. Custom / Direct templated dispatch
    */
   async sendCustomMessage(input: SendCustomMessageInput) {
     const idempotencyKey = input.idempotencyKey || `custom:${Date.now()}:${Math.random().toString(36).substring(2, 9)}`;
