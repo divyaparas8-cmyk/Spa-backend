@@ -756,7 +756,9 @@ export class WhatsAppService {
       where: { id: appointmentId },
       include: {
         client: true,
-        mainTechnician: true,
+        mainTechnician: {
+          include: { staffProfile: true },
+        },
         appointmentServices: {
           include: { service: { select: { name: true } } },
         },
@@ -779,7 +781,7 @@ export class WhatsAppService {
       .filter(Boolean)
       .join(', ') || appointment.serviceSummary || 'Spa Treatment';
 
-    const technicianName = appointment.mainTechnician?.name || 'Specialist';
+    const technicianName = appointment.mainTechnician?.staffProfile?.name || 'Specialist';
     const appointmentDate = appointment.appointmentDate
       ? new Date(appointment.appointmentDate).toLocaleDateString('en-GB', { day: '2-digit', month: 'short', year: 'numeric' })
       : 'TBD';
