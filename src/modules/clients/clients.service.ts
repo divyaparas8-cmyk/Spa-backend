@@ -13,14 +13,32 @@ import {
 export class ClientsService {
   async createClient(data: CreateClientInput, authUser: AuthContextUser) {
     const trimmedPhone = data.phone.trim();
+    const cleanPhone = trimmedPhone.replace(/[\s\-\+\(\)]/g, '');
 
-    // 1. Check duplicate phone
-    const existing = await prisma.client.findUnique({
-      where: { phone: trimmedPhone },
+    // 1. Check duplicate phone (exact and normalized digits comparison)
+    const existing = await prisma.client.findFirst({
+      where: {
+        OR: [
+          { phone: trimmedPhone },
+          { whatsapp: trimmedPhone },
+        ],
+      },
     });
 
     if (existing) {
-      throw new AppError('Client with this phone number already exists', HTTP_STATUS.CONFLICT);
+      throw new AppError(`Client with this phone number already exists (${existing.name})`, HTTP_STATUS.CONFLICT);
+    }
+
+    if (cleanPhone) {
+      const allClients = await prisma.client.findMany({ select: { id: true, name: true, phone: true, whatsapp: true } });
+      const duplicateNormalized = allClients.find((c) => {
+        const cPhoneClean = (c.phone || '').replace(/[\s\-\+\(\)]/g, '');
+        const cWaClean = (c.whatsapp || '').replace(/[\s\-\+\(\)]/g, '');
+        return (cPhoneClean && cPhoneClean === cleanPhone) || (cWaClean && cWaClean === cleanPhone);
+      });
+      if (duplicateNormalized) {
+        throw new AppError(`Client with this phone number already exists (${duplicateNormalized.name})`, HTTP_STATUS.CONFLICT);
+      }
     }
 
     // 2. Client Acquisition Tracking Business Rule:
@@ -295,11 +313,20 @@ export class ClientsService {
     }
 
     if (data.phone && data.phone.trim() !== client.phone) {
-      const phoneExists = await prisma.client.findUnique({
-        where: { phone: data.phone.trim() },
+      const newTrimmed = data.phone.trim();
+      const newClean = newTrimmed.replace(/[\s\-\+\(\)]/g, '');
+
+      const allOtherClients = await prisma.client.findMany({
+        where: { id: { not: id } },
+        select: { id: true, name: true, phone: true, whatsapp: true },
+      });
+      const phoneExists = allOtherClients.find((c) => {
+        const cPhoneClean = (c.phone || '').replace(/[\s\-\+\(\)]/g, '');
+        const cWaClean = (c.whatsapp || '').replace(/[\s\-\+\(\)]/g, '');
+        return c.phone === newTrimmed || (cPhoneClean && cPhoneClean === newClean) || (cWaClean && cWaClean === newClean);
       });
       if (phoneExists) {
-        throw new AppError('Phone number already in use by another client', HTTP_STATUS.CONFLICT);
+        throw new AppError(`Phone number already in use by client "${phoneExists.name}"`, HTTP_STATUS.CONFLICT);
       }
     }
 
