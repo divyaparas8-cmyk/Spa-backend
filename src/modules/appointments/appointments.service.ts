@@ -106,6 +106,35 @@ export class AppointmentsService {
       throw new AppError('Client not found', HTTP_STATUS.NOT_FOUND);
     }
 
+    // Role-based restrictions: Technicians can ONLY book for themselves and their own clients
+    const userRole = (authUser.role || '').toUpperCase();
+    if (userRole === 'TECHNICIAN') {
+      data.mainTechnicianId = authUser.id;
+      if (data.services && data.services.length > 0) {
+        data.services.forEach((s) => {
+          s.technicianId = authUser.id;
+        });
+      }
+
+      const isIntroduced = client.introducedByEmployeeId === authUser.id;
+      const priorAppointment = await prisma.appointment.findFirst({
+        where: {
+          clientId: client.id,
+          OR: [
+            { mainTechnicianId: authUser.id },
+            { appointmentServices: { some: { technicianId: authUser.id } } },
+          ],
+        },
+      });
+
+      if (!isIntroduced && !priorAppointment) {
+        throw new AppError(
+          'You can only book appointments for your own clients (clients introduced by you or with whom you have previous appointments).',
+          HTTP_STATUS.FORBIDDEN
+        );
+      }
+    }
+
     // 2. Validate Main Technician exists
     const technician = await prisma.user.findUnique({
       where: { id: data.mainTechnicianId },

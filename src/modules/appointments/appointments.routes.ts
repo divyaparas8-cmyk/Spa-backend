@@ -8,10 +8,10 @@ const router = Router();
 // All appointment routes require authentication
 router.use(authMiddleware);
 
-// POST /api/v1/appointments — Create Appointment (Manager, Reception)
+// POST /api/v1/appointments — Create Appointment (Manager, Reception, Technician)
 router.post(
   '/',
-  allowRoles('MANAGER', 'RECEPTION'),
+  allowRoles('MANAGER', 'RECEPTION', 'TECHNICIAN'),
   (req, res, next) => appointmentsController.createAppointment(req, res, next)
 );
 
