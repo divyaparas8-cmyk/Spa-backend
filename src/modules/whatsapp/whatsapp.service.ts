@@ -194,6 +194,23 @@ export class WhatsAppService {
       };
     }
 
+    // Secondary check: prevent duplicate sent/queued automation messages for the same appointment
+    if (appointmentId && automationType) {
+      const existingByAppt = await prisma.whatsAppMessageLog.findFirst({
+        where: {
+          appointmentId,
+          automationType,
+          status: { in: ['SENT', 'DELIVERED', 'QUEUED'] },
+        },
+      });
+      if (existingByAppt) {
+        return {
+          alreadySent: true,
+          log: existingByAppt,
+        };
+      }
+    }
+
     // 2. Check if automation is active
     if (automationType) {
       const setting = await prisma.whatsAppAutomation.findUnique({
@@ -489,7 +506,7 @@ export class WhatsAppService {
     const setting = await this.getAutomationByType(WhatsAppAutomationType.AFTER_SERVICE);
     const message = this.compileTemplate(setting.template, event.placeholders);
 
-    const idempotencyKey = `after-service:${appointmentId}:${Date.now()}`;
+    const idempotencyKey = `after-service:${appointmentId}`;
 
     return this.dispatchMessage({
       recipientPhone: event.recipient.phone || '',
@@ -789,7 +806,7 @@ export class WhatsAppService {
       : 'TBD';
     const appointmentTime = appointment.appointmentTime || '14:00';
 
-    const idempotencyKey = `appt-confirm:${appointmentId}:${Date.now()}`;
+    const idempotencyKey = `appt-confirm:${appointmentId}`;
 
     return this.dispatchMessage({
       recipientPhone: phone,
