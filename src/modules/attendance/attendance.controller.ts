@@ -75,8 +75,9 @@ class AttendanceController {
    */
   async getToday(req: Request, res: Response, next: NextFunction): Promise<void> {
     try {
-      const isManager = req.user?.role?.toUpperCase() === 'MANAGER';
-      const requestedEmployeeId = (req.query.employeeId as string) || (isManager ? undefined : req.user?.id);
+      const roleUpper = req.user?.role?.toUpperCase() || '';
+      const canViewAll = roleUpper === 'MANAGER' || roleUpper === 'RECEPTION' || roleUpper === 'RECEPTIONIST';
+      const requestedEmployeeId = (req.query.employeeId as string) || (canViewAll ? undefined : req.user?.id);
       const dateStr = req.query.date as string | undefined;
 
       const result = await attendanceService.getTodayAttendance(requestedEmployeeId, dateStr);
@@ -93,8 +94,9 @@ class AttendanceController {
    */
   async getAll(req: Request, res: Response, next: NextFunction): Promise<void> {
     try {
-      const isManager = req.user?.role?.toUpperCase() === 'MANAGER';
-      const targetEmployeeId = isManager
+      const roleUpper = req.user?.role?.toUpperCase() || '';
+      const canViewAll = roleUpper === 'MANAGER' || roleUpper === 'RECEPTION' || roleUpper === 'RECEPTIONIST';
+      const targetEmployeeId = canViewAll
         ? (req.query.employeeId as string | undefined)
         : req.user?.id;
 
