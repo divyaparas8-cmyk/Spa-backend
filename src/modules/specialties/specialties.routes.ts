@@ -5,22 +5,20 @@ import { allowRoles } from '../../middleware/roleMiddleware';
 
 const router = Router();
 
-// All specialty routes require authentication
-router.use(authMiddleware);
-
-// GET /api/v1/specialties — view specialties (Manager, Reception, Technician)
+// GET /api/v1/specialties — view specialties (Public / All Roles)
 router.get(
   '/',
-  allowRoles('MANAGER', 'RECEPTION', 'TECHNICIAN'),
   (req, res, next) => specialtiesController.getSpecialties(req, res, next)
 );
 
 // GET /api/v1/specialties/:id — view single specialty
 router.get(
   '/:id',
-  allowRoles('MANAGER', 'RECEPTION', 'TECHNICIAN'),
   (req, res, next) => specialtiesController.getSpecialtyById(req, res, next)
 );
+
+// All specialty mutation routes require authentication
+router.use(authMiddleware);
 
 // POST /api/v1/specialties — create specialty (Manager only)
 router.post(

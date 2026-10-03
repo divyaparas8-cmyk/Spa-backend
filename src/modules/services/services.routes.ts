@@ -5,17 +5,18 @@ import { allowRoles } from '../../middleware/roleMiddleware';
 
 const router = Router();
 
-router.use(authMiddleware);
-
-// GET /api/v1/services — View services (Manager, Reception, Technician)
-router.get('/', allowRoles('MANAGER', 'RECEPTION', 'TECHNICIAN'), (req, res, next) =>
+// GET /api/v1/services — View services (Public / All Roles)
+router.get('/', (req, res, next) =>
   servicesController.getServices(req, res, next)
 );
 
-// GET /api/v1/services/:id — View single service (Manager, Reception, Technician)
-router.get('/:id', allowRoles('MANAGER', 'RECEPTION', 'TECHNICIAN'), (req, res, next) =>
+// GET /api/v1/services/:id — View single service
+router.get('/:id', (req, res, next) =>
   servicesController.getServiceById(req, res, next)
 );
+
+// Protected routes require authentication
+router.use(authMiddleware);
 
 // POST /api/v1/services — Create new service (Manager only)
 router.post('/', allowRoles('MANAGER'), (req, res, next) =>
