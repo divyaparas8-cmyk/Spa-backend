@@ -479,16 +479,17 @@ export class StockService {
       throw new AppError('Retail product not found', HTTP_STATUS.NOT_FOUND);
     }
 
-    const hasInvoices = await prisma.invoiceItem.count({ where: { retailProductId: id } });
-    if (hasInvoices > 0) {
-      await prisma.retailProduct.update({
-        where: { id },
-        data: { isActive: false },
+    await prisma.$transaction(async (tx) => {
+      // Disconnect linked invoice items (set retailProductId: null) so invoice history
+      // and financial receipts remain intact, while allowing permanent deletion
+      await tx.invoiceItem.updateMany({
+        where: { retailProductId: id },
+        data: { retailProductId: null },
       });
-      return { success: true, message: 'Product linked to past invoices; deactivated instead.' };
-    }
 
-    await prisma.retailProduct.delete({ where: { id } });
+      await tx.retailProduct.delete({ where: { id } });
+    });
+
     return { success: true, message: 'Retail product deleted successfully' };
   }
 }
