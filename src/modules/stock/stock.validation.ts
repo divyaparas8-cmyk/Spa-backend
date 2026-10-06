@@ -16,6 +16,8 @@ export const refillStockSchema = z.object({
 export const updateStockSchema = z.object({
   name: z.string().min(2).optional(),
   category: z.string().optional(),
+  quantity: z.number().nonnegative().optional(),
+  unit: z.string().min(1).optional(),
   isActive: z.boolean().optional(),
 });
 

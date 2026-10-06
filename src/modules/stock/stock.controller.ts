@@ -191,6 +191,32 @@ export class StockController {
       next(error);
     }
   }
+
+  async deleteServiceStock(req: Request, res: Response, next: NextFunction) {
+    try {
+      const id = getParamId(req, 'id');
+      const result = await stockService.deleteServiceStock(id);
+      res.status(HTTP_STATUS.OK).json({
+        success: true,
+        message: result.message,
+      });
+    } catch (error) {
+      next(error);
+    }
+  }
+
+  async deleteRetailProduct(req: Request, res: Response, next: NextFunction) {
+    try {
+      const id = getParamId(req, 'id');
+      const result = await stockService.deleteRetailProduct(id);
+      res.status(HTTP_STATUS.OK).json({
+        success: true,
+        message: result.message,
+      });
+    } catch (error) {
+      next(error);
+    }
+  }
 }
 
 export const stockController = new StockController();

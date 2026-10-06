@@ -37,7 +37,7 @@ export class StockService {
         where,
         skip,
         take: limit,
-        orderBy: { name: 'asc' },
+        orderBy: [{ isActive: 'desc' }, { name: 'asc' }],
       }),
     ]);
 
@@ -212,6 +212,8 @@ export class StockService {
       data: {
         name: data.name ? data.name.trim() : undefined,
         category: data.category !== undefined ? (data.category ? data.category.trim() : null) : undefined,
+        quantity: data.quantity !== undefined ? data.quantity : undefined,
+        unit: data.unit !== undefined ? data.unit.trim() : undefined,
         isActive: data.isActive !== undefined ? data.isActive : undefined,
       },
     });
@@ -455,6 +457,39 @@ export class StockService {
 
       return updatedProducts;
     });
+  }
+
+  async deleteServiceStock(id: string) {
+    const existing = await prisma.serviceStock.findUnique({ where: { id } });
+    if (!existing) {
+      throw new AppError('Service stock item not found', HTTP_STATUS.NOT_FOUND);
+    }
+
+    await prisma.$transaction(async (tx) => {
+      await tx.stockActivity.deleteMany({ where: { serviceStockId: id } });
+      await tx.serviceStock.delete({ where: { id } });
+    });
+
+    return { success: true, message: 'Stock item deleted successfully' };
+  }
+
+  async deleteRetailProduct(id: string) {
+    const existing = await prisma.retailProduct.findUnique({ where: { id } });
+    if (!existing) {
+      throw new AppError('Retail product not found', HTTP_STATUS.NOT_FOUND);
+    }
+
+    const hasInvoices = await prisma.invoiceItem.count({ where: { retailProductId: id } });
+    if (hasInvoices > 0) {
+      await prisma.retailProduct.update({
+        where: { id },
+        data: { isActive: false },
+      });
+      return { success: true, message: 'Product linked to past invoices; deactivated instead.' };
+    }
+
+    await prisma.retailProduct.delete({ where: { id } });
+    return { success: true, message: 'Retail product deleted successfully' };
   }
 }
 

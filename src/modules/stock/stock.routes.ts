@@ -67,4 +67,14 @@ router.patch('/:id', allowRoles('MANAGER'), (req, res, next) =>
   stockController.updateStock(req, res, next)
 );
 
+// DELETE /api/v1/stock/retail/:id — Manager deletes retail product
+router.delete('/retail/:id', allowRoles('MANAGER'), (req, res, next) =>
+  stockController.deleteRetailProduct(req, res, next)
+);
+
+// DELETE /api/v1/stock/:id — Manager deletes service stock item
+router.delete('/:id', allowRoles('MANAGER'), (req, res, next) =>
+  stockController.deleteServiceStock(req, res, next)
+);
+
 export default router;
