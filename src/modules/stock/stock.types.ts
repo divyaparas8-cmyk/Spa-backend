@@ -35,6 +35,7 @@ export interface StockActivityQueryFilter {
 }
 
 export interface CreateRetailProductInput {
+  barcode?: string;
   name: string;
   category: RetailCategory;
   price: number;
