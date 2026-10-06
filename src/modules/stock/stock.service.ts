@@ -357,8 +357,7 @@ export class StockService {
 
   async getRetailStock() {
     const products = await prisma.retailProduct.findMany({
-      where: { isActive: true },
-      orderBy: { name: 'asc' },
+      orderBy: [{ isActive: 'desc' }, { name: 'asc' }],
     });
 
     return {
@@ -366,6 +365,31 @@ export class StockService {
         ...p,
         price: Number(p.price),
       })),
+    };
+  }
+
+  async updateRetailProduct(
+    id: string,
+    data: { name?: string; price?: number; quantity?: number; isActive?: boolean }
+  ) {
+    const existing = await prisma.retailProduct.findUnique({ where: { id } });
+    if (!existing) {
+      throw new AppError('Retail product not found', HTTP_STATUS.NOT_FOUND);
+    }
+
+    const updated = await prisma.retailProduct.update({
+      where: { id },
+      data: {
+        ...(data.name !== undefined ? { name: data.name.trim() } : {}),
+        ...(data.price !== undefined ? { price: new Prisma.Decimal(data.price) } : {}),
+        ...(data.quantity !== undefined ? { quantity: data.quantity } : {}),
+        ...(data.isActive !== undefined ? { isActive: data.isActive } : {}),
+      },
+    });
+
+    return {
+      ...updated,
+      price: Number(updated.price),
     };
   }
 

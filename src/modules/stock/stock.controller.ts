@@ -7,6 +7,7 @@ import {
   stockQuerySchema,
   stockActivityQuerySchema,
   createRetailProductSchema,
+  updateRetailProductSchema,
   refillRetailSchema,
   deductRetailStockSchema,
 } from './stock.validation';
@@ -140,6 +141,21 @@ export class StockController {
       res.status(HTTP_STATUS.CREATED).json({
         success: true,
         message: 'Retail product created successfully',
+        data: result,
+      });
+    } catch (error) {
+      next(error);
+    }
+  }
+
+  async updateRetailProduct(req: Request, res: Response, next: NextFunction) {
+    try {
+      const id = getParamId(req, 'id');
+      const validated = updateRetailProductSchema.parse(req.body);
+      const result = await stockService.updateRetailProduct(id, validated);
+      res.status(HTTP_STATUS.OK).json({
+        success: true,
+        message: 'Retail product updated successfully',
         data: result,
       });
     } catch (error) {

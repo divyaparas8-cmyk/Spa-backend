@@ -42,6 +42,13 @@ export const createRetailProductSchema = z.object({
   quantity: z.number().int().nonnegative('Quantity must be 0 or more').default(0),
 });
 
+export const updateRetailProductSchema = z.object({
+  name: z.string().min(2).optional(),
+  price: z.number().positive().optional(),
+  quantity: z.number().int().nonnegative().optional(),
+  isActive: z.boolean().optional(),
+});
+
 export const refillRetailSchema = z.object({
   quantity: z.number().int().positive('Quantity must be a positive integer'),
 });

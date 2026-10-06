@@ -22,6 +22,11 @@ router.post('/retail', allowRoles('MANAGER'), (req, res, next) =>
   stockController.createRetailProduct(req, res, next)
 );
 
+// PATCH /api/v1/stock/retail/:id — Manager update retail product (price, stock, active status)
+router.patch('/retail/:id', allowRoles('MANAGER'), (req, res, next) =>
+  stockController.updateRetailProduct(req, res, next)
+);
+
 // POST /api/v1/stock/retail/:id/refill — Manager refill retail product
 router.post('/retail/:id/refill', allowRoles('MANAGER'), (req, res, next) =>
   stockController.refillRetailProduct(req, res, next)
