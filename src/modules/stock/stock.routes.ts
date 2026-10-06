@@ -22,6 +22,11 @@ router.post('/retail', allowRoles('MANAGER'), (req, res, next) =>
   stockController.createRetailProduct(req, res, next)
 );
 
+// PATCH /api/v1/stock/retail/:id — Manager update retail product (price, stock, active status)
+router.patch('/retail/:id', allowRoles('MANAGER'), (req, res, next) =>
+  stockController.updateRetailProduct(req, res, next)
+);
+
 // POST /api/v1/stock/retail/:id/refill — Manager refill retail product
 router.post('/retail/:id/refill', allowRoles('MANAGER'), (req, res, next) =>
   stockController.refillRetailProduct(req, res, next)
@@ -60,6 +65,16 @@ router.post('/:id/adjust', allowRoles('MANAGER'), (req, res, next) =>
 // PATCH /api/v1/stock/:id — Manager updates service stock details
 router.patch('/:id', allowRoles('MANAGER'), (req, res, next) =>
   stockController.updateStock(req, res, next)
+);
+
+// DELETE /api/v1/stock/retail/:id — Manager deletes retail product
+router.delete('/retail/:id', allowRoles('MANAGER'), (req, res, next) =>
+  stockController.deleteRetailProduct(req, res, next)
+);
+
+// DELETE /api/v1/stock/:id — Manager deletes service stock item
+router.delete('/:id', allowRoles('MANAGER'), (req, res, next) =>
+  stockController.deleteServiceStock(req, res, next)
 );
 
 export default router;

@@ -7,6 +7,7 @@ import {
   stockQuerySchema,
   stockActivityQuerySchema,
   createRetailProductSchema,
+  updateRetailProductSchema,
   refillRetailSchema,
   deductRetailStockSchema,
 } from './stock.validation';
@@ -147,6 +148,21 @@ export class StockController {
     }
   }
 
+  async updateRetailProduct(req: Request, res: Response, next: NextFunction) {
+    try {
+      const id = getParamId(req, 'id');
+      const validated = updateRetailProductSchema.parse(req.body);
+      const result = await stockService.updateRetailProduct(id, validated);
+      res.status(HTTP_STATUS.OK).json({
+        success: true,
+        message: 'Retail product updated successfully',
+        data: result,
+      });
+    } catch (error) {
+      next(error);
+    }
+  }
+
   async refillRetailProduct(req: Request, res: Response, next: NextFunction) {
     try {
       const id = getParamId(req, 'id');
@@ -170,6 +186,32 @@ export class StockController {
         success: true,
         message: 'Retail product stock deducted successfully',
         data: result,
+      });
+    } catch (error) {
+      next(error);
+    }
+  }
+
+  async deleteServiceStock(req: Request, res: Response, next: NextFunction) {
+    try {
+      const id = getParamId(req, 'id');
+      const result = await stockService.deleteServiceStock(id);
+      res.status(HTTP_STATUS.OK).json({
+        success: true,
+        message: result.message,
+      });
+    } catch (error) {
+      next(error);
+    }
+  }
+
+  async deleteRetailProduct(req: Request, res: Response, next: NextFunction) {
+    try {
+      const id = getParamId(req, 'id');
+      const result = await stockService.deleteRetailProduct(id);
+      res.status(HTTP_STATUS.OK).json({
+        success: true,
+        message: result.message,
       });
     } catch (error) {
       next(error);

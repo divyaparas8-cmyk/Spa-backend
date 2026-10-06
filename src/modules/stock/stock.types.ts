@@ -15,6 +15,8 @@ export interface RefillStockInput {
 export interface UpdateStockInput {
   name?: string;
   category?: string;
+  quantity?: number;
+  unit?: string;
   isActive?: boolean;
 }
 

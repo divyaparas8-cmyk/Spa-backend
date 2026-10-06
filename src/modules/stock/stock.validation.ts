@@ -16,6 +16,8 @@ export const refillStockSchema = z.object({
 export const updateStockSchema = z.object({
   name: z.string().min(2).optional(),
   category: z.string().optional(),
+  quantity: z.number().nonnegative().optional(),
+  unit: z.string().min(1).optional(),
   isActive: z.boolean().optional(),
 });
 
@@ -41,6 +43,13 @@ export const createRetailProductSchema = z.object({
   category: z.nativeEnum(RetailCategory),
   price: z.number({ required_error: 'Price is required' }).positive('Price must be greater than 0'),
   quantity: z.number().int().nonnegative('Quantity must be 0 or more').default(0),
+});
+
+export const updateRetailProductSchema = z.object({
+  name: z.string().min(2).optional(),
+  price: z.number().positive().optional(),
+  quantity: z.number().int().nonnegative().optional(),
+  isActive: z.boolean().optional(),
 });
 
 export const refillRetailSchema = z.object({

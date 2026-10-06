@@ -37,7 +37,7 @@ export class StockService {
         where,
         skip,
         take: limit,
-        orderBy: { name: 'asc' },
+        orderBy: [{ isActive: 'desc' }, { name: 'asc' }],
       }),
     ]);
 
@@ -212,6 +212,8 @@ export class StockService {
       data: {
         name: data.name ? data.name.trim() : undefined,
         category: data.category !== undefined ? (data.category ? data.category.trim() : null) : undefined,
+        quantity: data.quantity !== undefined ? data.quantity : undefined,
+        unit: data.unit !== undefined ? data.unit.trim() : undefined,
         isActive: data.isActive !== undefined ? data.isActive : undefined,
       },
     });
@@ -357,8 +359,7 @@ export class StockService {
 
   async getRetailStock() {
     const products = await prisma.retailProduct.findMany({
-      where: { isActive: true },
-      orderBy: { name: 'asc' },
+      orderBy: [{ isActive: 'desc' }, { name: 'asc' }],
     });
 
     return {
@@ -366,6 +367,31 @@ export class StockService {
         ...p,
         price: Number(p.price),
       })),
+    };
+  }
+
+  async updateRetailProduct(
+    id: string,
+    data: { name?: string; price?: number; quantity?: number; isActive?: boolean }
+  ) {
+    const existing = await prisma.retailProduct.findUnique({ where: { id } });
+    if (!existing) {
+      throw new AppError('Retail product not found', HTTP_STATUS.NOT_FOUND);
+    }
+
+    const updated = await prisma.retailProduct.update({
+      where: { id },
+      data: {
+        ...(data.name !== undefined ? { name: data.name.trim() } : {}),
+        ...(data.price !== undefined ? { price: new Prisma.Decimal(data.price) } : {}),
+        ...(data.quantity !== undefined ? { quantity: data.quantity } : {}),
+        ...(data.isActive !== undefined ? { isActive: data.isActive } : {}),
+      },
+    });
+
+    return {
+      ...updated,
+      price: Number(updated.price),
     };
   }
 
@@ -432,6 +458,40 @@ export class StockService {
 
       return updatedProducts;
     });
+  }
+
+  async deleteServiceStock(id: string) {
+    const existing = await prisma.serviceStock.findUnique({ where: { id } });
+    if (!existing) {
+      throw new AppError('Service stock item not found', HTTP_STATUS.NOT_FOUND);
+    }
+
+    await prisma.$transaction(async (tx) => {
+      await tx.stockActivity.deleteMany({ where: { serviceStockId: id } });
+      await tx.serviceStock.delete({ where: { id } });
+    });
+
+    return { success: true, message: 'Stock item deleted successfully' };
+  }
+
+  async deleteRetailProduct(id: string) {
+    const existing = await prisma.retailProduct.findUnique({ where: { id } });
+    if (!existing) {
+      throw new AppError('Retail product not found', HTTP_STATUS.NOT_FOUND);
+    }
+
+    await prisma.$transaction(async (tx) => {
+      // Disconnect linked invoice items (set retailProductId: null) so invoice history
+      // and financial receipts remain intact, while allowing permanent deletion
+      await tx.invoiceItem.updateMany({
+        where: { retailProductId: id },
+        data: { retailProductId: null },
+      });
+
+      await tx.retailProduct.delete({ where: { id } });
+    });
+
+    return { success: true, message: 'Retail product deleted successfully' };
   }
 }
 
