@@ -1,12 +1,31 @@
-import { Router } from 'express';
+import { Router, Request, Response, NextFunction } from 'express';
 import { socialController } from './social.controller';
 import { authMiddleware } from '../../middleware/authMiddleware';
 import { allowRoles } from '../../middleware/roleMiddleware';
+import { uploadSocialMedia, handleMulterError } from '../../middleware/upload';
+import { AppError } from '../../middleware/errorHandler';
+import { HTTP_STATUS } from '../../config/constants';
 
 const router = Router();
 
+const handleSocialUpload = (req: Request, res: Response, next: NextFunction) => {
+  uploadSocialMedia(req, res, (err: any) => {
+    if (err) {
+      const message = handleMulterError(err);
+      return next(new AppError(message, HTTP_STATUS.BAD_REQUEST));
+    }
+    next();
+  });
+};
+
 // Require authentication for all social routes
 router.use(authMiddleware);
+
+// POST /api/v1/social/upload - Upload photos/videos to Cloudinary for social posts
+router.post('/upload', allowRoles('MANAGER', 'RECEPTION'), handleSocialUpload, (req, res, next) =>
+  socialController.uploadMedia(req, res, next)
+);
+
 
 // GET /api/v1/social/accounts - View live connected account statuses
 router.get('/accounts', allowRoles('MANAGER', 'RECEPTION'), (req, res, next) =>
