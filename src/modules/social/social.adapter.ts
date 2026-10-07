@@ -58,7 +58,7 @@ export class SocialAdapter {
       {
         id: 'facebook',
         name: 'Facebook',
-        handle: fbOk ? `Page ID: ${this.metaPageId}` : 'Omega Spa Douala',
+        handle: fbOk ? 'OMEGA SPA' : 'Omega Spa Douala',
         connected: fbOk,
         statusText: fbOk ? 'Connected' : 'API Key Required',
         missingKeys: fbMissing,
@@ -67,7 +67,7 @@ export class SocialAdapter {
       {
         id: 'instagram',
         name: 'Instagram',
-        handle: igOk ? `@Account: ${this.instagramAccountId}` : '@omegaspadouala',
+        handle: igOk ? '@omegaspa237' : '@omegaspa237',
         connected: igOk,
         statusText: igOk ? 'Connected' : 'API Key Required',
         missingKeys: igMissing,
