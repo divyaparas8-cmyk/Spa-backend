@@ -398,6 +398,7 @@ export class StockService {
   async createRetailProduct(data: CreateRetailProductInput) {
     const product = await prisma.retailProduct.create({
       data: {
+        barcode: data.barcode || null,
         name: data.name.trim(),
         category: data.category,
         price: new Prisma.Decimal(data.price),

@@ -38,6 +38,7 @@ export const stockActivityQuerySchema = z.object({
 });
 
 export const createRetailProductSchema = z.object({
+  barcode: z.string().optional(),
   name: z.string({ required_error: 'Product name is required' }).min(2),
   category: z.nativeEnum(RetailCategory),
   price: z.number({ required_error: 'Price is required' }).positive('Price must be greater than 0'),

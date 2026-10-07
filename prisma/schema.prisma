@@ -477,6 +477,7 @@ model StockActivity {
 
 model RetailProduct {
   id           String         @id @default(uuid())
+  barcode      String?        @unique
   name         String
   category     RetailCategory
   price        Decimal        @db.Decimal(10, 2)
