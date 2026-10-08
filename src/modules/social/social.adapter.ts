@@ -219,6 +219,55 @@ export class SocialAdapter {
   }
 
   /**
+   * Poll Instagram media container until status_code === 'FINISHED'
+   * Prevents "Media ID is not available" (Error 9007 / 2207027) while Meta processes the media
+   */
+  private async waitForInstagramContainerReady(
+    containerId: string,
+    maxAttempts = 15,
+    delayMs = 2000
+  ): Promise<void> {
+    for (let attempt = 1; attempt <= maxAttempts; attempt++) {
+      try {
+        const res = await fetch(
+          `https://graph.facebook.com/v20.0/${containerId}?fields=status_code,status&access_token=${this.metaAccessToken}`
+        );
+        const data = (await res.json()) as any;
+
+        if (data?.status_code === 'FINISHED') {
+          return;
+        }
+
+        if (data?.status_code === 'ERROR') {
+          throw new Error(data?.status || 'Instagram media processing failed on Meta servers');
+        }
+
+        if (data?.error) {
+          throw new Error(data.error.message || 'Error checking Instagram container status');
+        }
+      } catch (err: any) {
+        if (
+          err.message &&
+          (err.message.includes('Instagram media processing') ||
+            err.message.includes('Error checking'))
+        ) {
+          throw err;
+        }
+        logger.warn(
+          `Instagram container status check attempt ${attempt}/${maxAttempts} warning:`,
+          { error: err?.message }
+        );
+      }
+
+      await new Promise((resolve) => setTimeout(resolve, delayMs));
+    }
+
+    throw new Error(
+      'Instagram media container preparation timed out on Meta servers. Please try again.'
+    );
+  }
+
+  /**
    * Publish post to Instagram Professional/Business via Meta Graph API v20.0
    */
   async publishToInstagram(params: {
@@ -274,6 +323,11 @@ export class SocialAdapter {
           throw new Error('Failed to create Instagram carousel item containers');
         }
 
+        // Wait for all child item containers to finish processing on Meta servers
+        for (const itemId of itemIds) {
+          await this.waitForInstagramContainerReady(itemId);
+        }
+
         // Parent carousel container
         const parentRes = await fetch(
           `https://graph.facebook.com/v20.0/${this.instagramAccountId}/media`,
@@ -293,21 +347,34 @@ export class SocialAdapter {
           throw new Error(parentData?.error?.message || 'Failed to create Instagram carousel parent container');
         }
 
-        // Publish container
-        const publishRes = await fetch(
-          `https://graph.facebook.com/v20.0/${this.instagramAccountId}/media_publish`,
-          {
-            method: 'POST',
-            headers: { 'Content-Type': 'application/json' },
-            body: JSON.stringify({
-              creation_id: parentData.id,
-              access_token: this.metaAccessToken,
-            }),
+        // Wait for parent carousel container to finish processing
+        await this.waitForInstagramContainerReady(parentData.id);
+
+        // Publish container with retry for replication lag
+        let publishData: any = null;
+        for (let pubAttempt = 1; pubAttempt <= 3; pubAttempt++) {
+          const publishRes = await fetch(
+            `https://graph.facebook.com/v20.0/${this.instagramAccountId}/media_publish`,
+            {
+              method: 'POST',
+              headers: { 'Content-Type': 'application/json' },
+              body: JSON.stringify({
+                creation_id: parentData.id,
+                access_token: this.metaAccessToken,
+              }),
+            }
+          );
+          publishData = (await publishRes.json()) as any;
+          if (!publishData?.error) {
+            break;
           }
-        );
-        const publishData = (await publishRes.json()) as any;
-        if (publishData.error) {
-          throw new Error(publishData.error.message || 'Instagram carousel publish failed');
+          const errMsg = publishData.error.message || '';
+          if (errMsg.includes('Media ID is not available') && pubAttempt < 3) {
+            logger.warn(`Instagram carousel publish retry ${pubAttempt}: Media ID not available yet. Retrying in 2.5s...`);
+            await new Promise((resolve) => setTimeout(resolve, 2500));
+            continue;
+          }
+          throw new Error(errMsg || 'Instagram carousel publish failed');
         }
 
         return {
@@ -335,21 +402,34 @@ export class SocialAdapter {
         throw new Error(containerData?.error?.message || 'Failed to create Instagram media container');
       }
 
-      // Publish media container
-      const publishRes = await fetch(
-        `https://graph.facebook.com/v20.0/${this.instagramAccountId}/media_publish`,
-        {
-          method: 'POST',
-          headers: { 'Content-Type': 'application/json' },
-          body: JSON.stringify({
-            creation_id: containerData.id,
-            access_token: this.metaAccessToken,
-          }),
+      // Wait for media container to finish processing on Meta servers
+      await this.waitForInstagramContainerReady(containerData.id);
+
+      // Publish media container with retry for replication lag
+      let publishData: any = null;
+      for (let pubAttempt = 1; pubAttempt <= 3; pubAttempt++) {
+        const publishRes = await fetch(
+          `https://graph.facebook.com/v20.0/${this.instagramAccountId}/media_publish`,
+          {
+            method: 'POST',
+            headers: { 'Content-Type': 'application/json' },
+            body: JSON.stringify({
+              creation_id: containerData.id,
+              access_token: this.metaAccessToken,
+            }),
+          }
+        );
+        publishData = (await publishRes.json()) as any;
+        if (!publishData?.error) {
+          break;
         }
-      );
-      const publishData = (await publishRes.json()) as any;
-      if (publishData.error) {
-        throw new Error(publishData.error.message || 'Instagram media publish failed');
+        const errMsg = publishData.error.message || '';
+        if (errMsg.includes('Media ID is not available') && pubAttempt < 3) {
+          logger.warn(`Instagram single image publish retry ${pubAttempt}: Media ID not available yet. Retrying in 2.5s...`);
+          await new Promise((resolve) => setTimeout(resolve, 2500));
+          continue;
+        }
+        throw new Error(errMsg || 'Instagram media publish failed');
       }
 
       return {

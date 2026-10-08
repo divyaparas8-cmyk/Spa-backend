@@ -167,11 +167,26 @@ export class SocialService {
       }
     }
 
+    let existingPostIds: Record<string, string> = {};
+    if (post.platformPostIds) {
+      try {
+        existingPostIds = JSON.parse(post.platformPostIds);
+      } catch {
+        existingPostIds = {};
+      }
+    }
+
     const results: PublishResult[] = [];
-    const postIds: Record<string, string> = {};
+    const postIds: Record<string, string> = { ...existingPostIds };
     const errors: string[] = [];
 
     for (const plat of platforms) {
+      // If already successfully published to this platform, keep it and skip re-posting
+      if (existingPostIds[plat]) {
+        results.push({ platform: plat, success: true, postId: existingPostIds[plat] });
+        continue;
+      }
+
       let res: PublishResult = { platform: plat, success: false };
 
       if (plat === 'facebook') {
