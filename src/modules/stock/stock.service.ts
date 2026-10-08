@@ -372,7 +372,7 @@ export class StockService {
 
   async updateRetailProduct(
     id: string,
-    data: { name?: string; price?: number; quantity?: number; isActive?: boolean }
+    data: { barcode?: string; name?: string; price?: number; quantity?: number; isActive?: boolean }
   ) {
     const existing = await prisma.retailProduct.findUnique({ where: { id } });
     if (!existing) {
@@ -382,6 +382,7 @@ export class StockService {
     const updated = await prisma.retailProduct.update({
       where: { id },
       data: {
+        ...(data.barcode !== undefined ? { barcode: data.barcode.trim() || null } : {}),
         ...(data.name !== undefined ? { name: data.name.trim() } : {}),
         ...(data.price !== undefined ? { price: new Prisma.Decimal(data.price) } : {}),
         ...(data.quantity !== undefined ? { quantity: data.quantity } : {}),

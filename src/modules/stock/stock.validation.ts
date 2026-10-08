@@ -46,6 +46,7 @@ export const createRetailProductSchema = z.object({
 });
 
 export const updateRetailProductSchema = z.object({
+  barcode: z.string().optional(),
   name: z.string().min(2).optional(),
   price: z.number().positive().optional(),
   quantity: z.number().int().nonnegative().optional(),
