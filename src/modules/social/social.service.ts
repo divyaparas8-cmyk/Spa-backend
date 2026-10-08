@@ -151,6 +151,12 @@ export class SocialService {
     const post = await db.socialPost.findUnique({ where: { id: postId } });
     if (!post) throw new AppError('Post not found', HTTP_STATUS.NOT_FOUND);
 
+    // Prevent concurrent execution from overlapping scheduler ticks
+    await db.socialPost.update({
+      where: { id: postId },
+      data: { status: 'PUBLISHING' as any },
+    });
+
     let platforms: SocialPlatformId[] = [];
     try {
       platforms = JSON.parse(post.platforms);
