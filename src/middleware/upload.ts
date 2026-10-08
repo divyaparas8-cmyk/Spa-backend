@@ -76,6 +76,18 @@ export const uploadCleaningProof = multer({
   { name: 'image', maxCount: 1 },
 ]);
 
+/**
+ * Social media photo/video upload middleware (supports up to 10 files)
+ */
+export const uploadSocialMedia = multer({
+  storage,
+  fileFilter,
+  limits: {
+    fileSize: 10 * 1024 * 1024, // 10MB
+    files: 10,
+  },
+}).array('files', 10);
+
 
 /**
  * Error handler wrapper for multer errors

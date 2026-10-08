@@ -1,6 +1,8 @@
 import { Request, Response, NextFunction } from 'express';
 import { socialService } from './social.service';
+import { mediaService } from '../media/media.service';
 import { HTTP_STATUS } from '../../config/constants';
+import { AppError } from '../../middleware/errorHandler';
 
 function getParamId(req: Request, key: string = 'id'): string {
   const val = req.params[key];
@@ -64,6 +66,28 @@ export class SocialController {
       res.status(HTTP_STATUS.OK).json({
         success: true,
         message: 'Post deleted successfully',
+      });
+    } catch (error) {
+      next(error);
+    }
+  }
+
+  async uploadMedia(req: Request, res: Response, next: NextFunction): Promise<void> {
+    try {
+      const files = req.files as Express.Multer.File[] | undefined;
+      if (!files || files.length === 0) {
+        throw new AppError('No files uploaded', HTTP_STATUS.BAD_REQUEST);
+      }
+
+      const uploadPromises = files.map((file) =>
+        mediaService.uploadBufferToCloudinary(file.buffer, 'omega-spa/social')
+      );
+      const results = await Promise.all(uploadPromises);
+      const urls = results.map((r) => r.url);
+
+      res.status(HTTP_STATUS.OK).json({
+        success: true,
+        data: { urls },
       });
     } catch (error) {
       next(error);
