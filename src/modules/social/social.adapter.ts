@@ -50,10 +50,6 @@ export class SocialAdapter {
     if (!this.metaAccessToken.trim()) igMissing.push('META_PAGE_ACCESS_TOKEN');
     if (!this.instagramAccountId.trim()) igMissing.push('INSTAGRAM_ACCOUNT_ID');
 
-    const ttOk = this.isTikTokConfigured();
-    const ttMissing: string[] = [];
-    if (!this.tiktokAccessToken.trim()) ttMissing.push('TIKTOK_ACCESS_TOKEN');
-
     return [
       {
         id: 'facebook',
@@ -72,15 +68,6 @@ export class SocialAdapter {
         statusText: igOk ? 'Connected' : 'API Key Required',
         missingKeys: igMissing,
         iconColor: '#E1306C',
-      },
-      {
-        id: 'tiktok',
-        name: 'TikTok',
-        handle: ttOk ? 'Connected' : '@omegaspadouala',
-        connected: ttOk,
-        statusText: ttOk ? 'Connected' : 'API Key Required',
-        missingKeys: ttMissing,
-        iconColor: '#000000',
       },
     ];
   }
