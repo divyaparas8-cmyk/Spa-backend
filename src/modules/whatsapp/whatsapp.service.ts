@@ -14,6 +14,7 @@ import {
 import { whatsappAdapter } from './whatsapp.adapter';
 import { notificationEventBuilder } from '../notifications/notification-event.builder';
 import { invoicePdfService } from '../invoices/invoice-pdf.service';
+import { logger } from '../../utils/logger';
 
 export function normalizeAutomationType(input: string): WhatsAppAutomationType {
   const up = (input || '').toUpperCase().replace(/-/g, '_');
@@ -822,6 +823,72 @@ export class WhatsAppService {
         appointmentTime,
         serviceNames,
         technicianName,
+      ],
+    });
+  }
+
+  /**
+   * 8b. Staff Appointment Alert — triggered when appointment is booked.
+   * Sends instant notification to the assigned Barber / Technician via WhatsApp.
+   */
+  async triggerStaffAppointmentAlert(appointmentId: string) {
+    const appointment = await prisma.appointment.findUnique({
+      where: { id: appointmentId },
+      include: {
+        client: true,
+        mainTechnician: {
+          include: { staffProfile: true },
+        },
+        appointmentServices: {
+          include: { service: { select: { name: true } } },
+        },
+      },
+    });
+
+    if (!appointment || !appointment.mainTechnician) {
+      return { alreadySent: false, log: null, error: 'Appointment or technician not found' };
+    }
+
+    const technician = appointment.mainTechnician;
+    const staffProfile = technician.staffProfile;
+    const staffPhone = staffProfile?.phone;
+
+    if (!staffPhone || !staffPhone.trim()) {
+      logger.info(`[Appointments] Staff appointment alert skipped: technician "${staffProfile?.name || technician.email}" has no phone number`);
+      return { alreadySent: false, log: null, error: 'Staff has no phone number configured' };
+    }
+
+    const technicianName = staffProfile?.name || technician.email || 'Specialist';
+    const clientName = appointment.client?.name || 'Client';
+
+    const serviceNames =
+      appointment.appointmentServices
+        .map((as) => as.service?.name)
+        .filter(Boolean)
+        .join(', ') || appointment.serviceSummary || 'Spa Service';
+
+    const appointmentDate = appointment.appointmentDate
+      ? new Date(appointment.appointmentDate).toLocaleDateString('en-GB', { day: '2-digit', month: 'short', year: 'numeric' })
+      : 'Today';
+    const appointmentTime = appointment.appointmentTime || 'TBD';
+
+    const idempotencyKey = `staff-appt-alert:${appointmentId}:${technician.id}`;
+
+    return this.dispatchMessage({
+      recipientPhone: staffPhone,
+      message: `Hello ${technicianName}, you have a new appointment assigned at OMEGA SPA!\n\nClient: ${clientName}\nService: ${serviceNames}\nDate & Time: ${appointmentDate} at ${appointmentTime}\n\nPlease ensure your workstation is prepared and be ready to welcome your client.`,
+      idempotencyKey,
+      automationType: WhatsAppAutomationType.APPOINTMENT_REMINDER,
+      clientId: appointment.clientId,
+      appointmentId: appointment.id,
+      templateName: 'staff_appointment_alert',
+      templateLanguage: 'en_US',
+      templateVariables: [
+        technicianName,
+        clientName,
+        serviceNames,
+        appointmentDate,
+        appointmentTime,
       ],
     });
   }

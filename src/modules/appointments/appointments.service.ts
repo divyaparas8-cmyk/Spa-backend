@@ -246,10 +246,18 @@ export class AppointmentsService {
       return appt;
     });
 
-    // 6. Send instant WhatsApp appointment confirmation via Meta-approved template
+    // 6. Send instant WhatsApp appointment confirmation to client via Meta-approved template
     // Fire-and-forget: don't block the response if WhatsApp dispatch fails
     whatsappService.triggerAppointmentConfirmation(appointment.id).catch((err) => {
       logger.error('[Appointments] WhatsApp appointment confirmation failed (non-blocking)', {
+        appointmentId: appointment.id,
+        error: err?.message || String(err),
+      });
+    });
+
+    // 7. Send instant WhatsApp alert to the assigned barber/technician
+    whatsappService.triggerStaffAppointmentAlert(appointment.id).catch((err) => {
+      logger.error('[Appointments] WhatsApp staff appointment alert failed (non-blocking)', {
         appointmentId: appointment.id,
         error: err?.message || String(err),
       });
