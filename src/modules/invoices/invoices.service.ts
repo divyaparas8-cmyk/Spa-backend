@@ -341,13 +341,21 @@ export class InvoicesService {
 
   async getInvoices(query: InvoiceQueryFilter) {
     const page = Math.max(1, parseInt(String(query.page || 1), 10));
-    const limit = Math.max(1, Math.min(100, parseInt(String(query.limit || 20), 10)));
+    const limit = Math.max(1, Math.min(1000, parseInt(String(query.limit || 20), 10)));
     const skip = (page - 1) * limit;
 
     const where: any = {};
     if (query.status) where.status = query.status;
     if (query.clientId) where.clientId = query.clientId;
     if (query.date) where.date = new Date(query.date);
+    if (query.search && query.search.trim()) {
+      const s = query.search.trim();
+      where.OR = [
+        { invoiceNumber: { contains: s, mode: 'insensitive' } },
+        { client: { name: { contains: s, mode: 'insensitive' } } },
+        { client: { phone: { contains: s, mode: 'insensitive' } } },
+      ];
+    }
 
     const [total, invoices] = await Promise.all([
       prisma.invoice.count({ where }),

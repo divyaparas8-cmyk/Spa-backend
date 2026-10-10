@@ -54,6 +54,7 @@ export const invoiceQuerySchema = z.object({
   status: z.nativeEnum(InvoiceStatus).optional(),
   date: z.string().optional(),
   clientId: z.string().optional(),
+  search: z.string().optional(),
   page: z.union([z.string(), z.number()]).optional(),
   limit: z.union([z.string(), z.number()]).optional(),
 });

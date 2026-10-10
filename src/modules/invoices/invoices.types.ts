@@ -30,6 +30,7 @@ export interface InvoiceQueryFilter {
   status?: InvoiceStatus;
   date?: string;
   clientId?: string;
+  search?: string;
   page?: number | string;
   limit?: number | string;
 }

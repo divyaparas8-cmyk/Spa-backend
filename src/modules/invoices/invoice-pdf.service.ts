@@ -51,7 +51,6 @@ export class InvoicePdfService {
       const pm = String(rawPaymentMethod).toUpperCase().replace(/-/g, '_');
       if (pm.includes('ORANGE')) paymentMethodDisplay = 'ORANGE MONEY';
       else if (pm.includes('MTN') || pm.includes('MOMO')) paymentMethodDisplay = 'MTN MOMO';
-      else if (pm.includes('CARD') || pm.includes('CREDIT')) paymentMethodDisplay = 'CREDIT CARD';
       else paymentMethodDisplay = pm.replace(/_/g, ' ');
     }
 
