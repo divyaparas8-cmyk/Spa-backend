@@ -5,7 +5,7 @@ import { HTTP_STATUS } from '../../config/constants';
 
 export class InvoicePdfService {
   /**
-   * Generates a luxury, branded PDF receipt buffer for an invoice
+   * Generates a luxury, branded PDF receipt matching the exact in-app receipt design (ReceiptModal)
    */
   async generateInvoicePdf(invoiceId: string): Promise<{ buffer: Buffer; filename: string }> {
     const invoice = await prisma.invoice.findUnique({
@@ -36,33 +36,75 @@ export class InvoicePdfService {
       throw new AppError('Invoice not found', HTTP_STATUS.NOT_FOUND);
     }
 
-    const clientName = invoice.client?.name || 'Valued Guest';
-    const clientPhone = invoice.client?.phone || invoice.client?.whatsapp || '—';
+    const clientName =
+      invoice.client?.name && invoice.client.name.trim().toLowerCase() !== 'client'
+        ? invoice.client.name
+        : (invoice.clientId ? 'Client' : 'Walk in');
+
     const invNumber = invoice.invoiceNumber || invoice.id.slice(0, 8);
     const filename = `OMEGA_SPA_Receipt_${invNumber}.pdf`;
 
     const lastPayment = invoice.payments[0];
-    const paymentMethod = lastPayment?.paymentMethod || 'CASH';
+    const rawPaymentMethod = lastPayment?.paymentMethod || 'CASH';
+    let paymentMethodDisplay = 'CASH';
+    if (rawPaymentMethod) {
+      const pm = String(rawPaymentMethod).toUpperCase().replace(/-/g, '_');
+      if (pm.includes('ORANGE')) paymentMethodDisplay = 'ORANGE MONEY';
+      else if (pm.includes('MTN') || pm.includes('MOMO')) paymentMethodDisplay = 'MTN MOMO';
+      else if (pm.includes('CARD') || pm.includes('CREDIT')) paymentMethodDisplay = 'CREDIT CARD';
+      else paymentMethodDisplay = pm.replace(/_/g, ' ');
+    }
 
     const paidDate = lastPayment?.paidAt || invoice.createdAt;
     const dateStr = new Date(paidDate).toLocaleDateString('en-GB', {
       weekday: 'short',
-      day: '2-digit',
-      month: 'short',
+      day: 'numeric',
+      month: 'long',
       year: 'numeric',
-    });
-    const timeStr = new Date(paidDate).toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' });
+    }); // e.g. "Sat, 10 October 2026"
+    const timeStr = new Date(paidDate).toLocaleTimeString('en-US', {
+      hour: '2-digit',
+      minute: '2-digit',
+      hour12: true,
+    }); // e.g. "11:48 AM"
+
+    const technicians =
+      Array.from(
+        new Set(
+          (invoice.items || [])
+            .map((it) => it.technician?.staffProfile?.name || it.technician?.email)
+            .filter(Boolean)
+        )
+      ).join(', ') || 'Staff';
 
     const subtotal = Number(invoice.subtotal);
     const discount = Number(invoice.discount);
     const total = Number(invoice.total);
     const pointsEarned = invoice.pointsEarned || Math.round(total / 1000);
-    const loyaltyBalance = invoice.client?.loyalty?.balance || pointsEarned;
+    const pointsRedeemed = invoice.pointsRedeemed || 0;
+    const loyaltyBalance = invoice.client?.loyalty?.balance !== undefined ? invoice.client.loyalty.balance : pointsEarned;
+
+    // Filter items into Services, Drinks, and Cosmetics (same as in ReceiptModal)
+    const items = invoice.items || [];
+    const serviceItems = items.filter((item) => {
+      const it = (item.itemType || '').toUpperCase();
+      return it === 'SERVICE' || (!it && !item.retailProduct);
+    });
+    const drinkItems = items.filter((item) => {
+      const it = (item.itemType || '').toUpperCase();
+      const cat = (item.retailProduct?.category || '').toUpperCase();
+      return it === 'DRINK' || cat === 'DRINK';
+    });
+    const cosmeticItems = items.filter((item) => {
+      const it = (item.itemType || '').toUpperCase();
+      const cat = (item.retailProduct?.category || '').toUpperCase();
+      return it === 'COSMETIC' || cat === 'COSMETIC' || (it === 'RETAIL' && cat !== 'DRINK');
+    });
 
     return new Promise((resolve, reject) => {
       const doc = new PDFDocument({
         size: 'A4',
-        margin: 40,
+        margin: 0,
         info: {
           Title: `OMEGA SPA Receipt - ${invNumber}`,
           Author: 'OMEGA SPA Douala',
@@ -75,149 +117,222 @@ export class InvoicePdfService {
       doc.on('end', () => resolve({ buffer: Buffer.concat(chunks), filename }));
       doc.on('error', (err) => reject(err));
 
-      // ── COLOR PALETTE ──
-      const primaryCharcoal = '#2E2F31';
-      const accentSage = '#4A8C5C';
-      const textGray = '#6B7280';
-      const borderGray = '#E5E7EB';
-      const bgSand = '#F9F6F0';
+      // ── DIMENSIONS (Centered card matching ReceiptModal max-w-[460px]) ──
+      const cardWidth = 460;
+      const cardX = Math.round((595.28 - cardWidth) / 2); // 68
+      const cardY = 35;
 
-      // ── 1. HEADER BANNER ──
-      doc.rect(40, 40, 515, 65).fill(primaryCharcoal);
+      // ── 1. TOP HEADER BAR (#2E2F31) ──
+      doc.roundedRect(cardX, cardY, cardWidth, 56, 10).fill('#2E2F31');
+      doc.rect(cardX, cardY + 25, cardWidth, 31).fill('#2E2F31');
 
       doc.fillColor('#FFFFFF')
-        .fontSize(20)
+        .fontSize(16)
         .font('Helvetica-Bold')
-        .text('OMEGA SPA', 55, 52);
+        .text('OMEGA SPA', cardX + 18, cardY + 12);
 
-      doc.fontSize(8)
+      doc.fillColor('#A3A3A3')
+        .fontSize(8.5)
         .font('Helvetica')
-        .fillColor('#D1D5DB')
-        .text('DOUALA, CAMEROON · BEAUTY & WELLNESS', 55, 76);
+        .text('DOUALA, CAMEROON', cardX + 18, cardY + 33);
+
+      doc.fillColor('#9CA3AF')
+        .fontSize(8.5)
+        .font('Helvetica')
+        .text('OFFICIAL RECEIPT', cardX + 220, cardY + 12, { width: 222, align: 'right' });
 
       doc.fillColor('#FFFFFF')
-        .fontSize(10)
+        .fontSize(12)
         .font('Helvetica-Bold')
-        .text('OFFICIAL RECEIPT / REÇU', 360, 52, { width: 180, align: 'right' });
+        .text(invNumber, cardX + 220, cardY + 28, { width: 222, align: 'right' });
 
-      doc.fontSize(12)
-        .font('Helvetica-Bold')
-        .fillColor('#9CA3AF')
-        .text(invNumber, 360, 70, { width: 180, align: 'right' });
+      // ── 2. DATE / CLIENT METADATA BLOCK ──
+      let y = cardY + 56 + 14;
 
-      // ── 2. TRANSACTION & CLIENT INFO METADATA ──
-      let y = 120;
-      doc.rect(40, y, 515, 60).fill(bgSand);
-      doc.rect(40, y, 515, 60).stroke(borderGray);
+      // Date
+      doc.fillColor('#76736F').fontSize(9).font('Helvetica').text('Date', cardX + 18, y);
+      doc.fillColor('#2E2F31').fontSize(9).font('Helvetica-Bold').text(dateStr, cardX + 120, y);
+      y += 16;
 
-      // Left Column
-      doc.fillColor(textGray).fontSize(8).font('Helvetica').text('DATE & TIME', 55, y + 10);
-      doc.fillColor(primaryCharcoal).fontSize(10).font('Helvetica-Bold').text(`${dateStr} · ${timeStr}`, 55, y + 22);
+      // Time
+      doc.fillColor('#76736F').fontSize(9).font('Helvetica').text('Time', cardX + 18, y);
+      doc.fillColor('#2E2F31').fontSize(9).font('Helvetica-Bold').text(timeStr, cardX + 120, y);
+      y += 16;
 
-      doc.fillColor(textGray).fontSize(8).font('Helvetica').text('PAYMENT METHOD', 55, y + 36);
-      doc.fillColor(primaryCharcoal).fontSize(9).font('Helvetica-Bold').text(paymentMethod.replace('_', ' '), 55, y + 46);
+      // Client
+      doc.fillColor('#76736F').fontSize(9).font('Helvetica').text('Client', cardX + 18, y);
+      doc.fillColor('#2E2F31').fontSize(10).font('Helvetica-Bold').text(clientName, cardX + 120, y);
+      y += 16;
 
-      // Right Column
-      doc.fillColor(textGray).fontSize(8).font('Helvetica').text('CLIENT', 320, y + 10);
-      doc.fillColor(primaryCharcoal).fontSize(10).font('Helvetica-Bold').text(clientName, 320, y + 22);
-
-      doc.fillColor(textGray).fontSize(8).font('Helvetica').text('PHONE / WHATSAPP', 320, y + 36);
-      doc.fillColor(primaryCharcoal).fontSize(9).font('Helvetica').text(clientPhone, 320, y + 46);
-
-      // ── 3. SERVICES & ITEMS TABLE ──
-      y = 195;
-      doc.fillColor(primaryCharcoal).fontSize(10).font('Helvetica-Bold').text('ITEMS & SERVICES RENDERED / PRESTATIONS', 40, y);
-      y += 18;
-
-      // Table Header Row
-      doc.rect(40, y, 515, 20).fill('#F3F4F6');
-      doc.fillColor(primaryCharcoal).fontSize(8).font('Helvetica-Bold');
-      doc.text('DESCRIPTION', 50, y + 6);
-      doc.text('TECHNICIAN', 270, y + 6);
-      doc.text('QTY', 380, y + 6, { width: 30, align: 'center' });
-      doc.text('AMOUNT (FCFA)', 420, y + 6, { width: 125, align: 'right' });
+      // Technician(s)
+      doc.fillColor('#76736F').fontSize(9).font('Helvetica').text('Technician(s)', cardX + 18, y);
+      doc.fillColor('#2E2F31').fontSize(9).font('Helvetica-Bold').text(technicians, cardX + 120, y);
       y += 20;
 
-      // Table Rows
-      doc.font('Helvetica').fontSize(9);
-      if (invoice.items && invoice.items.length > 0) {
-        invoice.items.forEach((item, idx) => {
-          const rowBg = idx % 2 === 0 ? '#FFFFFF' : '#FAFAFA';
-          doc.rect(40, y, 515, 24).fill(rowBg);
-          doc.rect(40, y, 515, 24).stroke(borderGray);
+      // Divider line
+      doc.moveTo(cardX + 18, y).lineTo(cardX + cardWidth - 18, y).strokeColor('#E8E1D9').lineWidth(1).stroke();
+      y += 14;
 
-          const itemName = item.name || item.service?.name || item.productName || 'Spa Treatment';
+      // ── 3. ITEMS & SERVICES RENDERED ──
+      doc.fillColor('#76736F').fontSize(8.5).font('Helvetica-Bold').text('ITEMS & SERVICES RENDERED', cardX + 18, y);
+      y += 16;
+
+      // 3A. Services
+      if (serviceItems.length > 0) {
+        doc.fillColor('#2E2F31').fontSize(8.5).font('Helvetica-Bold').text(`SERVICES (${serviceItems.length})`, cardX + 18, y);
+        y += 12;
+        doc.moveTo(cardX + 18, y).lineTo(cardX + cardWidth - 18, y).strokeColor('#2E2F31').lineWidth(1).stroke();
+        y += 8;
+
+        serviceItems.forEach((item) => {
+          const itemName = item.name || item.service?.name || 'Spa Service';
           const techName = item.technician?.staffProfile?.name || 'Staff';
           const itemPrice = Number(item.price);
 
-          doc.fillColor(primaryCharcoal).text(itemName, 50, y + 7, { width: 215, height: 14, ellipsis: true });
-          doc.fillColor(textGray).text(techName, 270, y + 7, { width: 100, height: 14, ellipsis: true });
-          doc.fillColor(primaryCharcoal).text(String(item.quantity || 1), 380, y + 7, { width: 30, align: 'center' });
-          doc.font('Helvetica-Bold').fillColor(primaryCharcoal).text(`${itemPrice.toLocaleString('en-US')} FCFA`, 420, y + 7, { width: 125, align: 'right' });
+          doc.fillColor('#2E2F31').fontSize(9.5).font('Helvetica-Bold').text(itemName, cardX + 18, y, { width: 280, ellipsis: true });
+          doc.fillColor('#2E2F31').fontSize(9.5).font('Helvetica-Bold').text(`${itemPrice.toLocaleString('en-US')} FCFA`, cardX + 300, y, { width: 142, align: 'right' });
+          doc.fillColor('#76736F').fontSize(8).font('Helvetica').text(`Tech: ${techName}`, cardX + 18, y + 13);
 
-          doc.font('Helvetica');
-          y += 24;
+          doc.moveTo(cardX + 18, y + 26).lineTo(cardX + cardWidth - 18, y + 26).strokeColor('#E8E1D9').lineWidth(0.5).stroke();
+          y += 32;
         });
-      } else {
-        doc.rect(40, y, 515, 24).fill('#FFFFFF');
-        doc.fillColor(primaryCharcoal).text('Spa Services & Treatments', 50, y + 7);
-        doc.text(`${total.toLocaleString('en-US')} FCFA`, 420, y + 7, { width: 125, align: 'right' });
-        y += 24;
       }
 
-      // ── 4. FINANCIAL TOTALS SUMMARY ──
-      y += 15;
-      const totalsX = 330;
-      const totalsWidth = 225;
+      // 3B. Drinks (if any)
+      if (drinkItems.length > 0) {
+        doc.fillColor('#2E2F31').fontSize(8.5).font('Helvetica-Bold').text(`DRINKS (${drinkItems.length})`, cardX + 18, y);
+        y += 12;
+        doc.moveTo(cardX + 18, y).lineTo(cardX + cardWidth - 18, y).strokeColor('#2E2F31').lineWidth(1).stroke();
+        y += 8;
 
-      doc.rect(totalsX, y, totalsWidth, 80).fill('#FFFFFF');
-      doc.rect(totalsX, y, totalsWidth, 80).stroke(borderGray);
+        drinkItems.forEach((item) => {
+          const itemName = item.name || item.retailProduct?.name || 'Drink';
+          const qty = item.quantity || 1;
+          const itemPrice = Number(item.price);
+          const unitPrice = Math.round(itemPrice / qty);
 
-      doc.fillColor(textGray).fontSize(9).font('Helvetica');
-      doc.text('Subtotal:', totalsX + 15, y + 12);
-      doc.text(`${subtotal.toLocaleString('en-US')} FCFA`, totalsX + 100, y + 12, { width: 110, align: 'right' });
+          doc.fillColor('#2E2F31').fontSize(9.5).font('Helvetica-Bold').text(itemName, cardX + 18, y, { width: 280, ellipsis: true });
+          doc.fillColor('#2E2F31').fontSize(9.5).font('Helvetica-Bold').text(`${itemPrice.toLocaleString('en-US')} FCFA`, cardX + 300, y, { width: 142, align: 'right' });
+          doc.fillColor('#76736F').fontSize(8).font('Helvetica').text(`Qty: ${qty}${qty > 1 ? ` · (${unitPrice.toLocaleString('en-US')} FCFA each)` : ' · Retail Drink'}`, cardX + 18, y + 13);
+
+          doc.moveTo(cardX + 18, y + 26).lineTo(cardX + cardWidth - 18, y + 26).strokeColor('#E8E1D9').lineWidth(0.5).stroke();
+          y += 32;
+        });
+      }
+
+      // 3C. Cosmetics (if any)
+      if (cosmeticItems.length > 0) {
+        doc.fillColor('#2E2F31').fontSize(8.5).font('Helvetica-Bold').text(`COSMETICS (${cosmeticItems.length})`, cardX + 18, y);
+        y += 12;
+        doc.moveTo(cardX + 18, y).lineTo(cardX + cardWidth - 18, y).strokeColor('#2E2F31').lineWidth(1).stroke();
+        y += 8;
+
+        cosmeticItems.forEach((item) => {
+          const itemName = item.name || item.retailProduct?.name || 'Cosmetic';
+          const qty = item.quantity || 1;
+          const itemPrice = Number(item.price);
+          const unitPrice = Math.round(itemPrice / qty);
+
+          doc.fillColor('#2E2F31').fontSize(9.5).font('Helvetica-Bold').text(itemName, cardX + 18, y, { width: 280, ellipsis: true });
+          doc.fillColor('#2E2F31').fontSize(9.5).font('Helvetica-Bold').text(`${itemPrice.toLocaleString('en-US')} FCFA`, cardX + 300, y, { width: 142, align: 'right' });
+          doc.fillColor('#76736F').fontSize(8).font('Helvetica').text(`Qty: ${qty}${qty > 1 ? ` · (${unitPrice.toLocaleString('en-US')} FCFA each)` : ' · Retail Cosmetic'}`, cardX + 18, y + 13);
+
+          doc.moveTo(cardX + 18, y + 26).lineTo(cardX + cardWidth - 18, y + 26).strokeColor('#E8E1D9').lineWidth(0.5).stroke();
+          y += 32;
+        });
+      }
+
+      // Fallback if no categorized items
+      if (serviceItems.length === 0 && drinkItems.length === 0 && cosmeticItems.length === 0) {
+        doc.fillColor('#2E2F31').fontSize(9.5).font('Helvetica-Bold').text('Spa Services & Treatments', cardX + 18, y);
+        doc.fillColor('#2E2F31').fontSize(9.5).font('Helvetica-Bold').text(`${total.toLocaleString('en-US')} FCFA`, cardX + 300, y, { width: 142, align: 'right' });
+        doc.moveTo(cardX + 18, y + 20).lineTo(cardX + cardWidth - 18, y + 20).strokeColor('#E8E1D9').lineWidth(0.5).stroke();
+        y += 26;
+      }
+
+      // ── 4. SUBTOTAL & DISCOUNT ──
+      y += 4;
+      doc.moveTo(cardX + 18, y).lineTo(cardX + cardWidth - 18, y).strokeColor('#E8E1D9').lineWidth(1).stroke();
+      y += 8;
+
+      doc.fillColor('#76736F').fontSize(9).font('Helvetica').text('Subtotal', cardX + 18, y);
+      doc.fillColor('#2E2F31').fontSize(9).font('Helvetica-Bold').text(`${subtotal.toLocaleString('en-US')} FCFA`, cardX + 300, y, { width: 142, align: 'right' });
+      y += 16;
 
       if (discount > 0) {
-        doc.text('Discount / Remise:', totalsX + 15, y + 28);
-        doc.fillColor('#DC2626').text(`-${discount.toLocaleString('en-US')} FCFA`, totalsX + 100, y + 28, { width: 110, align: 'right' });
-        doc.fillColor(textGray);
+        doc.fillColor('#7FA285').fontSize(9).font('Helvetica').text(`Loyalty Discount (${pointsRedeemed} pts redeemed)`, cardX + 18, y);
+        doc.fillColor('#7FA285').fontSize(9).font('Helvetica-Bold').text(`−${discount.toLocaleString('en-US')} FCFA`, cardX + 300, y, { width: 142, align: 'right' });
+        y += 16;
       }
 
-      // Grand Total Highlight Bar
-      doc.rect(totalsX, y + 46, totalsWidth, 34).fill(primaryCharcoal);
-      doc.fillColor('#FFFFFF').fontSize(11).font('Helvetica-Bold');
-      doc.text('TOTAL PAID:', totalsX + 15, y + 57);
-      doc.text(`${total.toLocaleString('en-US')} FCFA`, totalsX + 90, y + 57, { width: 120, align: 'right' });
+      // ── 5. TOTAL BAR (#F6F1EB) ──
+      doc.rect(cardX + 18, y, cardWidth - 36, 28).fill('#F6F1EB');
+      doc.rect(cardX + 18, y, cardWidth - 36, 28).strokeColor('#2E2F31').lineWidth(1).stroke();
 
-      // ── 5. LOYALTY SUMMARY CARD (Left side) ──
-      doc.rect(40, y, 275, 80).fill(bgSand);
-      doc.rect(40, y, 275, 80).stroke(borderGray);
+      doc.fillColor('#2E2F31').fontSize(11).font('Helvetica-Bold').text('TOTAL', cardX + 28, y + 8);
+      doc.fillColor('#2E2F31').fontSize(11).font('Helvetica-Bold').text(`${total.toLocaleString('en-US')} FCFA`, cardX + 280, y + 8, { width: 160, align: 'right' });
+      y += 36;
 
-      doc.fillColor(primaryCharcoal).fontSize(9).font('Helvetica-Bold').text('LOYALTY REWARDS / PROGRAMME FIDÉLITÉ', 55, y + 12);
-      doc.fillColor(textGray).fontSize(8).font('Helvetica');
-      doc.text('Points Earned This Visit:', 55, y + 30);
-      doc.fillColor(accentSage).font('Helvetica-Bold').text(`+${pointsEarned} pts`, 220, y + 30, { width: 80, align: 'right' });
+      // ── 6. PAYMENT METHOD & STATUS ──
+      doc.moveTo(cardX + 18, y).lineTo(cardX + cardWidth - 18, y).strokeColor('#E8E1D9').lineWidth(1).stroke();
+      y += 8;
 
-      doc.fillColor(textGray).font('Helvetica').text('Current Total Balance:', 55, y + 48);
-      doc.fillColor(primaryCharcoal).font('Helvetica-Bold').fontSize(10).text(`${loyaltyBalance} pts`, 220, y + 48, { width: 80, align: 'right' });
+      doc.fillColor('#76736F').fontSize(9).font('Helvetica').text('Payment Method', cardX + 18, y);
+      doc.fillColor('#2E2F31').fontSize(9).font('Helvetica-Bold').text(paymentMethodDisplay, cardX + 260, y, { width: 182, align: 'right' });
+      y += 18;
 
-      // ── 6. FOOTER ──
-      const footerY = 730;
-      doc.moveTo(40, footerY).lineTo(555, footerY).stroke(borderGray);
+      doc.fillColor('#76736F').fontSize(9).font('Helvetica').text('Status', cardX + 18, y + 2);
 
-      doc.fillColor(primaryCharcoal)
+      const badgeW = 60;
+      const badgeH = 18;
+      const badgeX = cardX + cardWidth - 18 - badgeW;
+      doc.roundedRect(badgeX, y, badgeW, badgeH, 4).fill('#EDF4EE');
+      doc.fillColor('#4A8C5C').fontSize(8.5).font('Helvetica-Bold').text('✓ PAID', badgeX, y + 4.5, { width: badgeW, align: 'center' });
+      y += 28;
+
+      // ── 7. LOYALTY PROGRAM CARD (#F6F1EB) ──
+      if (invoice.clientId || invoice.client?.loyalty) {
+        const loyaltyBoxY = y;
+        const loyaltyBoxHeight = pointsRedeemed > 0 ? 68 : 54;
+        doc.roundedRect(cardX + 18, loyaltyBoxY, cardWidth - 36, loyaltyBoxHeight, 8).fill('#F6F1EB');
+
+        doc.fillColor('#76736F').fontSize(8).font('Helvetica-Bold').text('LOYALTY PROGRAM', cardX + 28, loyaltyBoxY + 10);
+
+        doc.fillColor('#2E2F31').fontSize(8.5).font('Helvetica').text('Points Earned This Visit', cardX + 28, loyaltyBoxY + 23);
+        doc.fillColor('#7FA285').fontSize(8.5).font('Helvetica-Bold').text(`+${pointsEarned} pts`, cardX + 260, loyaltyBoxY + 23, { width: 182, align: 'right' });
+
+        if (pointsRedeemed > 0) {
+          doc.fillColor('#2E2F31').fontSize(8.5).font('Helvetica').text('Points Redeemed', cardX + 28, loyaltyBoxY + 36);
+          doc.fillColor('#C77B6E').fontSize(8.5).font('Helvetica-Bold').text(`−${pointsRedeemed} pts`, cardX + 260, loyaltyBoxY + 36, { width: 182, align: 'right' });
+        }
+
+        const balY = pointsRedeemed > 0 ? loyaltyBoxY + 49 : loyaltyBoxY + 36;
+        doc.moveTo(cardX + 28, balY).lineTo(cardX + cardWidth - 28, balY).strokeColor('#E8E1D9').lineWidth(0.5).stroke();
+
+        doc.fillColor('#2E2F31').fontSize(8.5).font('Helvetica-Bold').text('Current Balance', cardX + 28, balY + 5);
+        doc.fillColor('#2E2F31').fontSize(9).font('Helvetica-Bold').text(`${loyaltyBalance} pts`, cardX + 260, balY + 5, { width: 182, align: 'right' });
+
+        y = loyaltyBoxY + loyaltyBoxHeight + 16;
+      }
+
+      // ── 8. FOOTER ──
+      doc.moveTo(cardX + 18, y).lineTo(cardX + cardWidth - 18, y).strokeColor('#E8E1D9').lineWidth(1).stroke();
+      y += 14;
+
+      doc.fillColor('#2E2F31')
         .fontSize(10)
         .font('Helvetica-Bold')
-        .text('Merci pour votre visite chez OMEGA SPA ! · Thank you for visiting !', 40, footerY + 12, { align: 'center', width: 515 });
+        .text('Thank you for visiting OMEGA SPA!', cardX, y, { width: cardWidth, align: 'center' });
 
-      doc.fillColor(textGray)
-        .fontSize(8)
+      doc.fillColor('#76736F')
+        .fontSize(8.5)
         .font('Helvetica')
-        .text('Douala, Cameroun · Tél: +237 6 87 67 32 62 · info@omegaspa.cm', 40, footerY + 28, { align: 'center', width: 515 });
+        .text('We look forward to pampering you again soon.', cardX, y + 14, { width: cardWidth, align: 'center' });
 
-      doc.fontSize(7)
-        .fillColor('#9CA3AF')
-        .text('Ce reçu a été généré électroniquement et est valable sans signature.', 40, footerY + 42, { align: 'center', width: 515 });
+      y += 36;
+
+      // ── OUTER CARD STROKE ──
+      doc.roundedRect(cardX, cardY, cardWidth, y - cardY, 10).strokeColor('#E8E1D9').lineWidth(1).stroke();
 
       doc.end();
     });
